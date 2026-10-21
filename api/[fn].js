@@ -615,6 +615,16 @@ H.auth = api(async (body, auth, req) => {
 
   if (action === "me") return session(uid);
 
+  if (action === "turn") { // short-lived logins for the free Open Relay TURN server (helps voice through strict networks)
+    const user = Math.floor(Date.now() / 1000 + 6 * 3600) + ":" + uid;
+    const credential = crypto.createHmac("sha1", "openrelayprojectsecret").update(user).digest("base64");
+    const host = "staticauth.openrelay.metered.ca";
+    return { iceServers: [
+      { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+      { urls: ["turn:" + host + ":80", "turn:" + host + ":443", "turn:" + host + ":443?transport=tcp", "turns:" + host + ":443?transport=tcp"], username: user, credential }
+    ] };
+  }
+
   if (action === "change") {
     if (!checkPassword(String(body.old || ""), l.salt, l.hash)) throw new Fail(401, "wrong", "Your current password is wrong.");
     const bad = pwProblem(body.password); if (bad) throw new Fail(400, "weak", bad);

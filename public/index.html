@@ -424,6 +424,7 @@ setTimeout(function(){ if(!window.YAPPS){ window.YAPPS={mode:"demo",error:"The s
     async resetWithCode(email, code, password) { const s = await auth("reset", { email, code, password }); setSession(s); return s.uid; },
     async changePassword(old, password) { const s = await auth("change", { old, password }); setSession(s); },
     async makeResetCode(name) { return auth("resetCode", { name }); },
+    turn: (() => { let p = null; return () => (p = p || auth("turn").then(r => r.iceServers).catch(e => { p = null; throw e; })); })(),
     async resetPassword() { throw { code: "use_code", message: "Ask the owner for a reset code." }; },
     async deleteUser() { await auth("delete"); token = null; ls.set(TOKEN_KEY, null); me = null; },
     async joinServer(code) {
@@ -865,6 +866,18 @@ a{color:var(--link)}
 .dm-pick small{color:var(--fog-dim)}
 /* voice */
 .mic-ic{position:absolute;right:10px;top:10px;font-size:14px}
+.live-tag{background:#e5484d;color:#fff;font-size:10px;font-weight:800;border-radius:4px;padding:1px 4px;vertical-align:1px}
+.screens{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:12px}
+.screen-tile{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:16/9;border:2px solid var(--vine)}
+.screen-tile video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+.screen-label{position:absolute;left:10px;bottom:10px;background:#000a;color:#fff;font-size:13px;font-weight:700;padding:3px 8px;border-radius:8px}
+.screen-full{position:absolute;right:8px;top:8px;background:#000a!important;color:#fff!important}
+.cam-slot{width:96px;height:96px;border-radius:50%;overflow:hidden;background:#000;flex:none}
+.cam-slot video{width:100%;height:100%;object-fit:cover;display:block;transform:scaleX(-1)}
+.tile .vol{width:80%;accent-color:var(--online);margin-top:2px}
+.vcbar .icon-btn{width:30px;height:30px;font-size:15px}
+.vcbar .vc-live b{font-size:12px;white-space:nowrap}
+.mic-pick{max-width:220px;background:var(--canopy);border:2px solid var(--vine);border-radius:8px;padding:7px 9px;font:inherit;color:var(--fog)}
 .vc-count{margin-left:auto;font-size:11px;font-weight:700;background:var(--online);color:#fff;border-radius:9px;padding:0 6px;line-height:18px}
 .vc-users span.talking .av{box-shadow:0 0 0 2px var(--online);border-radius:50%}
 .vcbar{display:flex;align-items:center;gap:4px;padding:8px 8px 8px 12px;border-top:1px solid var(--vine);background:var(--leaf)}
@@ -2212,7 +2225,7 @@ function setupRoom(){
 }
 setInterval(()=>{ if(Object.keys(S.typing).length) renderTyping(); }, 1000);
 function effStatus(){ return S.status==="online" && S.hidden ? "idle" : S.status; }
-function syncPresence(){ if(S.room && S.loggedIn) S.room.presence({uid:S.uid, k:key(), vc:S.status==="invisible"?null:S.vc, st:effStatus(), pid:(S.vc&&V.pid)||null, mic:!!(V.mic&&V.micOn)}).catch(()=>{}); }
+function syncPresence(){ if(S.room && S.loggedIn) S.room.presence({uid:S.uid, k:key(), vc:S.status==="invisible"?null:S.vc, st:effStatus(), pid:(S.vc&&V.pid)||null, mic:!!(V.mic&&V.micOn), scr:!!(S.vc&&V.out.screen), cam:!!(S.vc&&V.out.cam)}).catch(()=>{}); }
 document.addEventListener("visibilitychange",()=>{ S.hidden=document.hidden; syncPresence(); if(S.loggedIn) renderMe(); });
 const DEMO_ST={"bot:LavaLola":"dnd","bot:CanyonKing":"idle"};
 function statusMap(){
@@ -2257,7 +2270,9 @@ function leaveVC(){
   syncPresence(); renderChans(); renderStage(); toast("Left "+n);
 }
 /* ---- live microphone voice: every browser in a room connects to every other one (best for 2-6 people) ---- */
-const V = { peer:null, pid:null, mic:null, micOn:true, calls:{}, meters:{}, meterT:0, starting:false };
+const V = { peer:null, pid:null, mic:null, micOn:true, calls:{}, meters:{}, meterT:0, starting:false,
+  out:{screen:null, cam:null}, vout:{}, vin:{}, vels:{}, vol:(local.vcVol||{}) };
+const CAN_SCREEN = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
 function voiceNote(){
   if(!S.fb) return "Demo mode: live mic voice works on the real site. Typed voice and sounds work here.";
   if(!V.mic) return "🎙️ Mic is off or blocked. Allow the microphone in your browser to talk, or type to talk below.";
@@ -2270,22 +2285,37 @@ async function startVoice(){
   V.starting=true;
   try{
     if(!actx){ try{ actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} }
-    try{ V.mic=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}}); V.micOn=true; watchLevel(S.uid,V.mic); }
+    const ac={echoCancellation:true,noiseSuppression:!local.noNS,autoGainControl:true}; if(local.micId) ac.deviceId={ideal:local.micId};
+    try{ V.mic=await navigator.mediaDevices.getUserMedia({audio:ac}); V.micOn=true; watchLevel(S.uid,V.mic); }
     catch(e){ V.mic=null; toast("Mic blocked. You can still listen and type to talk."); }
     if(V.mic && isTimedOut()){ V.micOn=false; V.mic.getAudioTracks().forEach(t=>t.enabled=false); }
     const vid=S.vc;
-    V.peer=new Peer(undefined,{config:{iceServers:[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"}]}});
+    let ice=null; try{ if(window.YAPPS && YAPPS.turn) ice=await YAPPS.turn(); }catch(e){}
+    V.peer=new Peer(undefined,{config:{iceServers:ice||[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"}]}});
     V.peer.on("open",id=>{ if(S.vc!==vid){ V.peer && V.peer.destroy(); return; } V.pid=id; syncPresence(); connectVoicePeers(); renderStage(); renderVcBar(); });
     V.peer.on("call",call=>{
       if(!S.vc){ call.close(); return; }
       const from=call.metadata && call.metadata.uid;
       if(from && S.blocks.has(from)){ call.close(); return; }
+      const kind=call.metadata && call.metadata.kind;
+      if(kind==="screen" || kind==="cam"){
+        call.answer();
+        const key=call.peer+"|"+kind; V.vin[key]={call, uid:from, kind, stream:null};
+        call.on("stream", st=>{ if(V.vin[key] && V.vin[key].call===call){ V.vin[key].stream=st; renderStage(); renderChans(); } });
+        const end=()=>{ if(V.vin[key] && V.vin[key].call===call){ delete V.vin[key]; dropVideoEl(key); renderStage(); renderChans(); } };
+        call.on("close",end); call.on("error",end);
+        return;
+      }
       call.answer(V.mic||silentStream()); attachCall(call, from);
     });
     V.peer.on("error",e=>{ if(e && e.type==="peer-unavailable") return; console.warn("voice",e); });
   } finally { V.starting=false; }
 }
 function stopVoice(){
+  ["screen","cam"].forEach(k=>{ const st=V.out[k]; if(st) st.getTracks().forEach(t=>t.stop()); V.out[k]=null; });
+  Object.values(V.vout).forEach(c=>{ try{ c.close(); }catch(e){} }); V.vout={};
+  Object.values(V.vin).forEach(x=>{ try{ x.call.close(); }catch(e){} }); V.vin={};
+  Object.keys(V.vels).forEach(dropVideoEl);
   Object.values(V.calls).forEach(c=>{ try{ c.call.close(); }catch(e){} if(c.audio) c.audio.remove(); });
   V.calls={}; V.meters={};
   if(V.peer){ try{ V.peer.destroy(); }catch(e){} }
@@ -2302,12 +2332,80 @@ function connectVoicePeers(){
     const call=V.peer.call(pid, V.mic||silentStream(), {metadata:{uid:S.uid}});
     if(call) attachCall(call, uid);
   });
+  // screen share + camera: whoever is sharing calls everyone in the room with that picture
+  for(const kind of ["screen","cam"]){
+    const st=V.out[kind]; if(!st) continue;
+    here.forEach((uid,pid)=>{
+      const key=pid+"|"+kind; if(V.vout[key]) return;
+      const c=V.peer.call(pid, st, {metadata:{uid:S.uid, kind}});
+      if(!c) return; V.vout[key]=c;
+      const end=()=>{ if(V.vout[key]===c) delete V.vout[key]; }; c.on("close",end); c.on("error",end);
+    });
+  }
+  Object.keys(V.vout).forEach(key=>{ const [pid,kind]=key.split("|"); if(!here.has(pid) || !V.out[kind]){ try{ V.vout[key].close(); }catch(e){} delete V.vout[key]; } });
+  // drop pictures from people who stopped sharing or left
+  const flags=new Map(); S.peers.forEach(p=>{ const pr=p.presence||{}; if(pr.pid) flags.set(pr.pid,pr); });
+  Object.keys(V.vin).forEach(key=>{ const [pid,kind]=key.split("|"), pr=flags.get(pid);
+    if(!pr || pr.vc!==S.vc || !(kind==="screen"?pr.scr:pr.cam)){ try{ V.vin[key].call.close(); }catch(e){} delete V.vin[key]; dropVideoEl(key); } });
 }
+async function toggleShare(kind){
+  if(V.out[kind]){ stopShare(kind); return; }
+  if(!S.vc){ toast("Join a voice room first."); return; }
+  if(!V.peer || !V.pid){ toast("Voice is still connecting. Try again in a second."); return; }
+  if(isTimedOut()){ toast("You're timed out right now."); return; }
+  let st;
+  try{
+    st = kind==="screen"
+      ? await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:15,max:30}}, audio:true})
+      : await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:360},frameRate:{ideal:20}}});
+  }catch(e){ toast(kind==="screen"?"Screen sharing was cancelled.":"Camera blocked. Allow it in your browser, then try again."); return; }
+  if(!S.vc){ st.getTracks().forEach(t=>t.stop()); return; }
+  V.out[kind]=st;
+  st.getVideoTracks().forEach(t=>t.addEventListener("ended",()=>stopShare(kind)));
+  syncPresence(); connectVoicePeers(); renderStage(); renderChans(); renderVcBar();
+  toast(kind==="screen"?"You're sharing your screen 🖥️":"Camera on 📷");
+}
+function stopShare(kind){
+  const st=V.out[kind]; if(!st) return;
+  st.getTracks().forEach(t=>t.stop()); V.out[kind]=null;
+  Object.keys(V.vout).forEach(key=>{ if(key.endsWith("|"+kind)){ try{ V.vout[key].close(); }catch(e){} delete V.vout[key]; } });
+  dropVideoEl("me|"+kind);
+  syncPresence(); renderStage(); renderChans(); renderVcBar();
+  toast(kind==="screen"?"Stopped sharing your screen":"Camera off");
+}
+function videoEl(key, stream, muted){
+  let v=V.vels[key];
+  if(!v){ v=document.createElement("video"); v.autoplay=true; v.playsInline=true; v.setAttribute("playsinline",""); V.vels[key]=v; }
+  v.muted=!!muted;
+  if(v.srcObject!==stream) v.srcObject=stream;
+  return v;
+}
+function dropVideoEl(key){ const v=V.vels[key]; if(v){ try{ v.srcObject=null; }catch(e){} v.remove(); delete V.vels[key]; } }
+function camKey(uid){ if(uid===S.uid) return V.out.cam?"me|cam":null; const k=Object.keys(V.vin).find(k=>V.vin[k].uid===uid && V.vin[k].kind==="cam" && V.vin[k].stream); return k||null; }
+function screensList(){
+  const list=[]; if(V.out.screen) list.push({key:"me|screen", uid:S.uid, stream:V.out.screen, mine:true});
+  Object.entries(V.vin).forEach(([key,x])=>{ if(x.kind==="screen" && x.stream) list.push({key, uid:x.uid, stream:x.stream}); });
+  return list;
+}
+function mediaWallHTML(){
+  const sc=screensList(); if(!sc.length) return "";
+  return `<div class="screens">${sc.map(x=>`<div class="screen-tile" data-vslot="${esc(x.key)}"><div class="screen-label">🖥️ ${x.mine?"Your screen":esc(dn(x.uid))+"'s screen"}</div><button type="button" class="icon-btn screen-full" data-vfull="${esc(x.key)}" title="Full screen" aria-label="Full screen">⛶</button></div>`).join("")}</div>`;
+}
+function attachMedia(){
+  const st=$("stage"); if(!st) return;
+  st.querySelectorAll("[data-vslot]").forEach(slot=>{ const key=slot.dataset.vslot, x=screensList().find(y=>y.key===key); if(!x) return;
+    const v=videoEl(key, x.stream, x.mine || S.deaf); if(v.parentNode!==slot) slot.prepend(v); v.play().catch(()=>{}); });
+  st.querySelectorAll("[data-camslot]").forEach(slot=>{ const uid=slot.dataset.camslot, key=camKey(uid); if(!key) return;
+    const stream=key==="me|cam"?V.out.cam:V.vin[key].stream; const v=videoEl(key, stream, true); if(v.parentNode!==slot) slot.prepend(v); v.play().catch(()=>{}); });
+  st.querySelectorAll("[data-vfull]").forEach(b=>b.onclick=()=>{ const v=V.vels[b.dataset.vfull]; const el=v&&v.parentNode; if(el&&el.requestFullscreen) el.requestFullscreen().catch(()=>{}); });
+  st.querySelectorAll("[data-vol]").forEach(r=>r.oninput=()=>{ const uid=r.dataset.vol, val=+r.value; V.vol[uid]=val; local.vcVol=V.vol; saveLocal(); applyVolumes(); });
+}
+function applyVolumes(){ Object.values(V.calls).forEach(c=>{ if(c.audio && c.uid) c.audio.volume=Math.max(0,Math.min(1,V.vol[c.uid]??1)); }); }
 function attachCall(call, uid){
   const rec={call,uid,audio:null}; V.calls[call.peer]=rec;
   call.on("stream",rs=>{
     if(rec.audio) return;
-    const a=document.createElement("audio"); a.autoplay=true; a.playsInline=true; a.srcObject=rs; a.muted=S.deaf;
+    const a=document.createElement("audio"); a.autoplay=true; a.playsInline=true; a.srcObject=rs; a.muted=S.deaf; a.volume=Math.max(0,Math.min(1,V.vol[uid]??1));
     $("voiceAudio").appendChild(a); rec.audio=a; a.play().catch(()=>toast("Tap anywhere to hear the voice room."));
     if(uid) watchLevel(uid, rs);
     renderStage();
@@ -2354,7 +2452,9 @@ function renderVcBar(){
     ${S.fb?`<button class="icon-btn" id="vcMic" aria-pressed="${!(V.mic&&V.micOn)}" aria-label="${V.mic&&V.micOn?"Mute mic":"Unmute mic"}" title="${V.mic&&V.micOn?"Mute mic":"Unmute mic"}">${V.mic&&V.micOn?"🎙️":"🔇"}</button>`:""}
     <button class="icon-btn" id="vcOpen" aria-label="Open voice room" title="Open voice room">📺</button>
     <button class="icon-btn" id="vcDeaf" aria-pressed="${S.deaf}" aria-label="${S.deaf?"Undeafen":"Deafen"}" title="${S.deaf?"Undeafen":"Deafen"}">${S.deaf?"🔇":"🎧"}</button>
+    ${S.fb&&CAN_SCREEN?`<button class="icon-btn" id="vcScreen" aria-pressed="${!!V.out.screen}" aria-label="${V.out.screen?"Stop sharing your screen":"Share your screen"}" title="${V.out.screen?"Stop sharing":"Share screen"}">🖥️</button>`:""}
     <button class="icon-btn vc-leave" id="vcLeave" aria-label="Leave voice room" title="Leave">📞</button>`;
+  if($("vcScreen")) $("vcScreen").onclick=()=>toggleShare("screen");
   $("vcOpen").onclick=()=>{ S.view="vc"; renderStage(); $("app").classList.remove("open"); };
   $("vcDeaf").onclick=()=>{ S.deaf=!S.deaf; if(S.deaf) try{ speechSynthesis.cancel(); }catch(e){} Object.values(V.calls).forEach(c=>{ if(c.audio) c.audio.muted=S.deaf; }); renderVcBar(); renderStage(); };
   if($("vcMic")) $("vcMic").onclick=toggleMic;
@@ -2368,19 +2468,23 @@ function renderStage(){
   if(!show){ return; }
   const mem=vcMembers(S.vc), now=Date.now();
   st.innerHTML=`<div class="stage-head"><span class="sign">🔊 ${esc(vcName(S.vc))}</span><button class="btn" id="stBack">← Back to chat</button></div>
+    ${S.fb?mediaWallHTML():""}
     <div class="tiles">${mem.map(u=>{const p=prof(u), talk=S.speaking[u]>now, said=S.said[u];
       const pr=(S.peers.find(x=>x.by===u&&x.presence&&x.presence.vc===S.vc)||{}).presence||{};
       const micOn = u===S.uid ? !!(V.mic&&V.micOn) : !!pr.mic;
-      return `<div class="tile ${talk?"talking":""}" data-profile="${esc(u)}"><div class="av xl">${av(p)}</div><b>${esc(p.display||p.name)}${u===S.uid?' <span class="you-tag">YOU</span>':""}</b>${S.fb?`<span class="mic-ic" title="${micOn?"Mic on":"Mic off"}">${micOn?"🎙️":"🔇"}</span>`:""}${said&&said.until>now?`<div class="bubble">${esc(censor(said.text))}</div>`:""}</div>`;}).join("")}</div>
+      return `<div class="tile ${talk?"talking":""}" data-profile="${esc(u)}">${S.fb&&camKey(u)?`<div class="cam-slot" data-camslot="${esc(u)}"></div>`:`<div class="av xl">${av(p)}</div>`}<b>${esc(p.display||p.name)}${u===S.uid?' <span class="you-tag">YOU</span>':""}</b>${S.fb?`<span class="mic-ic" title="${micOn?"Mic on":"Mic off"}">${micOn?"🎙️":"🔇"}${pr.scr||(u===S.uid&&V.out.screen)?' <span class="live-tag">LIVE</span>':""}</span>`:""}${S.fb&&u!==S.uid?`<input type="range" class="vol" min="0" max="1" step="0.05" value="${V.vol[u]??1}" data-vol="${esc(u)}" aria-label="Volume for ${esc(p.display||p.name)}" title="Volume">`:""}${said&&said.until>now?`<div class="bubble">${esc(censor(said.text))}</div>`:""}</div>`;}).join("")}</div>
     <div class="stage-controls">
       <form id="sayForm" class="say"><input id="sayInput" maxlength="140" autocomplete="off" placeholder="Type to talk. Everyone in the room hears it out loud" aria-label="Say something out loud"><button class="send" type="submit">Say it</button></form>
       <div class="soundboard">${SFX.map(([k,l])=>`<button type="button" data-sfx="${k}">${l}</button>`).join("")}</div>
-      ${S.fb?`<div class="row"><button class="btn ${V.mic&&V.micOn?"primary":""}" id="stMic">${V.mic?(V.micOn?"🎙️ Mic on":"🔇 Muted"):"🎙️ Turn on mic"}</button></div>`:""}
+      ${S.fb?`<div class="row"><button class="btn ${V.mic&&V.micOn?"primary":""}" id="stMic">${V.mic?(V.micOn?"🎙️ Mic on":"🔇 Muted"):"🎙️ Turn on mic"}</button><button class="btn ${V.out.cam?"primary":""}" id="stCam">${V.out.cam?"📷 Camera on":"📷 Turn on camera"}</button>${CAN_SCREEN?`<button class="btn ${V.out.screen?"primary":""}" id="stScreen">${V.out.screen?"🛑 Stop sharing":"🖥️ Share screen"}</button>`:""}</div>`:""}
       <div class="row"><small class="note">${S.deaf?"🔇 You're deafened, so you won't hear others.":voiceNote()}</small><button class="danger-btn" id="stLeave">📞 Leave room</button></div>
     </div>`;
   $("stBack").onclick=()=>{ S.view="chat"; renderStage(); };
   $("stLeave").onclick=leaveVC;
   if($("stMic")) $("stMic").onclick=toggleMic;
+  if($("stCam")) $("stCam").onclick=()=>toggleShare("cam");
+  if($("stScreen")) $("stScreen").onclick=()=>toggleShare("screen");
+  if(S.fb) attachMedia();
   if(hadFocus||keepVal){ const i=$("sayInput"); i.value=keepVal; if(hadFocus){ i.focus(); i.setSelectionRange(keepVal.length,keepVal.length); } }
   $("sayForm").onsubmit=e=>{ e.preventDefault(); const v=$("sayInput").value.trim(); if(!v) return; $("sayInput").value=""; vcSay(v); };
   st.querySelector(".soundboard").onclick=e=>{ const b=e.target.closest("[data-sfx]"); if(b) vcSfx(b.dataset.sfx); };
@@ -4259,7 +4363,9 @@ function openUserSettings(tab){
       <div class="set-group"><label class="set-slider"><b>Your voice pitch</b><input type="range" id="setPitch" min="0.4" max="1.9" step="0.05" value="${pv}"><small id="setPitchVal">${pv<.8?"Deep gorilla":pv<1.3?"Normal gorilla":"Squeaky baby gorilla"}</small></label>
       <label class="set-slider"><b>Talking speed (what you hear)</b><input type="range" id="setRate" min="0.7" max="1.5" step="0.05" value="${+local.voiceRate||1.05}"></label>
       <div class="set-row"><span><b>Test it</b><small>Hear your own voice</small></span><button class="btn" id="setTest">▶ Ooga booga</button></div></div>
-      <p class="note" style="text-align:left">Join a voice channel to talk with your microphone. Your browser asks for permission the first time. You can also type to talk: everyone in the room hears your typed lines in this voice.</p>`; } break;
+      <div class="set-group"><div class="set-row"><span><b>Microphone</b><small>Pick which mic to use</small></span><select id="setMicPick" class="mic-pick"><option value="">Default mic</option></select></div>
+      <label class="set-toggle"><span><b>Noise suppression</b><small>Cuts out background noise like fans and keyboards</small></span><input type="checkbox" id="setNS" ${local.noNS?"":"checked"}><i aria-hidden="true"></i></label></div>
+      <p class="note" style="text-align:left">Join a voice channel to talk with your microphone, turn on your camera, or share your screen. Your browser asks for permission the first time. You can also type to talk: everyone in the room hears your typed lines in this voice.</p>`; } break;
     case "appearance": body=`<h2>Appearance</h2><div class="set-group">
       <div class="set-row"><span><b>Theme</b><small>Pastel day sky or dark night jungle</small></span><div class="seg"><button type="button" data-skypick="day" aria-pressed="${local.sky!=="night"}">☀️ Day</button><button type="button" data-skypick="night" aria-pressed="${local.sky==="night"}">🌙 Night</button></div></div>
       ${toggle("setCompact",local.compact,"Compact messages","Fit more messages on screen")}
@@ -4314,6 +4420,10 @@ function openUserSettings(tab){
   on("setMute",e=>{ local.mute=!e.target.checked; saveLocal(); renderMe(); });
   on("setFlash",e=>{ local.noFlash=!e.target.checked; saveLocal(); });
   on("setDmSound",e=>{ local.dmMute=!e.target.checked; saveLocal(); });
+  on("setNS",e=>{ local.noNS=!e.target.checked; saveLocal(); if(S.vc&&V.mic){ stopVoice(); startVoice(); } });
+  if($("setMicPick")){ const sel=$("setMicPick");
+    navigator.mediaDevices && navigator.mediaDevices.enumerateDevices && navigator.mediaDevices.enumerateDevices().then(ds=>{ ds.filter(d=>d.kind==="audioinput" && d.deviceId && d.deviceId!=="default").forEach((d,i)=>{ const o=document.createElement("option"); o.value=d.deviceId; o.textContent=d.label||("Microphone "+(i+1)); if(d.deviceId===local.micId) o.selected=true; sel.appendChild(o); }); }).catch(()=>{});
+    sel.onchange=()=>{ local.micId=sel.value||""; saveLocal(); toast("Mic changed"); if(S.vc){ stopVoice(); startVoice(); } }; }
   if($("setInstall")) $("setInstall").onclick=async()=>{ const ev=S.installEvt; if(!ev) return; S.installEvt=null; try{ ev.prompt(); const r=await ev.userChoice; if(r&&r.outcome==="accepted") toast("Installed! Find Gorilla Yapps on your home screen 🦍"); }catch(e){} openUserSettings("appearance"); };
   on("setDesk",async e=>{ if(!e.target.checked){ local.desktopNotif=false; saveLocal(); return; }
     let p="denied"; try{ p=await Notification.requestPermission(); }catch(err){}
