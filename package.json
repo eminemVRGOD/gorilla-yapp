@@ -1,0 +1,7 @@
+{
+  "name": "gorilla-yapps",
+  "private": true,
+  "type": "module",
+  "description": "Gorilla Yapps: a fan-made jungle chat hangout. Runs free on Vercel with an Upstash Redis database.",
+  "engines": { "node": ">=18" }
+}
