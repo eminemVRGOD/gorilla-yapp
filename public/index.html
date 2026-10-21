@@ -594,7 +594,7 @@ a{color:var(--link)}
 .topbar{display:flex;align-items:center;gap:8px;padding:10px 12px 10px 16px;border-bottom:1px solid var(--canopy);min-height:56px}
 .topbar h1{margin:0;font-family:var(--display);font-weight:400;font-size:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%}
 .topbar p{margin:0;color:var(--fog-dim);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;border-left:1px solid var(--vine);padding-left:10px}
-.topbar .menu,.topbar .troop-btn{display:none}
+.topbar .menu,.topbar .troop-btn,.topbar .more-btn{display:none}
 .mode-pill{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;padding:3px 8px;border-radius:10px;background:var(--leaf);color:var(--fog-dim);white-space:nowrap}
 .mode-pill.live{background:#5fd06822;color:var(--online)}
 .searchbar{display:flex;gap:8px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--canopy);background:var(--bark)}
@@ -1383,6 +1383,14 @@ body.compact .day{margin:8px 0 2px}
   .side{background:var(--bark)}
   .app{grid-template-columns:minmax(0,1fr)}
   .rail,.side{position:fixed;top:0;bottom:0;z-index:20;transform:translateX(-120%);transition:transform .22s}
+  .side{transform:translateX(calc(-100% - 90px - env(safe-area-inset-left,0px)))}
+  .topbar{flex-wrap:wrap;row-gap:4px}
+  .topbar h1{min-width:60px}
+  .topbar .more-btn{display:grid}
+  .topbar #slowBtn,.topbar #reportsBtn,.topbar #qsBtn,.topbar #inboxBtn,.topbar #savedBtn,.topbar #muteBtn{order:10;display:none}
+  .topbar.more-open #qsBtn,.topbar.more-open #inboxBtn,.topbar.more-open #savedBtn,.topbar.more-open #muteBtn{display:grid}
+  .topbar.more-open #slowBtn:not([hidden]),.topbar.more-open #reportsBtn:not([hidden]){display:grid}
+  .topbar.more-open::after{content:"";order:9;flex-basis:100%;height:0}
   .rail{left:0;width:72px;padding-top:calc(12px + env(safe-area-inset-top,0px));padding-left:env(safe-area-inset-left,0px);box-sizing:content-box}
   .side{left:calc(72px + env(safe-area-inset-left,0px));width:248px;padding-top:env(safe-area-inset-top,0px)}
   .app.open .rail,.app.open .side{transform:none}
@@ -1394,6 +1402,91 @@ body.compact .day{margin:8px 0 2px}
   .hint small{display:none}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+/* ===== Dark theme: flat dark-gray chat app look ===== */
+:root[data-sky="dark"]{
+  --app-bg:#313338; --auth-bg:linear-gradient(160deg,#1e1f22,#2b2d31 60%,#3a2f4f);
+  --panel:#2b2d31; --panel-chat:#313338; --blur:none;
+  --canopy:#1e1f22; --bark:#2b2d31; --moss:#232428; --leaf:#383a40; --vine:#3f4147; --vine-hi:#5c5f66;
+  --fog:#dbdee1; --fog-dim:#b5bac1; --fog-faint:#949ba4; --head:#f2f3f5;
+  --lava:#5865f2; --lava-hot:#7984f5; --lava-soft:#5865f220; --lava-ink:#ffffff;
+  --you:#f0b232; --link:#00a8fc; --online:#23a55a; --idle:#f0b232; --dnd:#f23f43; --danger:#f23f43;
+  --mention:#f0b232; --mention-soft:#f0b2321a; --hover:#2e3035;
+  --rail:#1e1f22; --rail-solid:#1e1f22; --rail-btn:#313338; --rail-ink:#dbdee1;
+  --display:"gg sans","Noto Sans","Segoe UI",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+  --body:"gg sans","Noto Sans","Segoe UI",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+  color-scheme:dark;
+}
+:root[data-sky="dark"] body{background:#313338}
+:root[data-sky="dark"] .sign{background:none;border:0;box-shadow:none;text-shadow:none;color:var(--head);padding:0;font-family:var(--body);font-weight:700;transform:none;border-radius:0}
+:root[data-sky="dark"] .sign::before,:root[data-sky="dark"] .sign::after{display:none}
+:root[data-sky="dark"] .logo.sign{font-size:40px;color:#fff;transform:none;box-shadow:none}
+/* server list */
+:root[data-sky="dark"] .rail{gap:8px;padding-block:12px}
+:root[data-sky="dark"] .map{background:#313338;color:#dbdee1;font-family:var(--body);font-weight:600}
+:root[data-sky="dark"] .map:hover{background:var(--lava);color:#fff}
+:root[data-sky="dark"] .map.active{background:var(--srv,var(--lava));color:#fff}
+:root[data-sky="dark"] .map.add{color:#23a55a;background:#313338}
+:root[data-sky="dark"] .map.add:hover{background:#23a55a;color:#fff}
+:root[data-sky="dark"] .map.tool{background:#313338}
+:root[data-sky="dark"] .rail hr{border:0;height:2px;width:32px;background:#35363c;border-radius:1px;margin:0}
+/* channel sidebar */
+:root[data-sky="dark"] .side{background:#2b2d31}
+:root[data-sky="dark"] .side-head{border-bottom:1px solid #1f2023;box-shadow:0 1px 0 #0000001a;min-height:48px;padding:0 16px}
+:root[data-sky="dark"] .side-head .t{font-family:var(--body);font-size:15px;font-weight:700;color:var(--head)}
+:root[data-sky="dark"] .side-head.has-banner{min-height:120px}
+:root[data-sky="dark"] .side-head.has-banner .t .sign{font-size:15px;color:#fff;text-shadow:0 1px 3px #000c}
+:root[data-sky="dark"] .cat{font-size:12px;font-weight:700;letter-spacing:.02em;color:#949ba4;padding:16px 8px 4px 4px}
+:root[data-sky="dark"] .cat:hover{color:#dbdee1}
+:root[data-sky="dark"] .troop .cat .sign,:root[data-sky="dark"] .chans .cat .sign{font-size:12px;letter-spacing:.02em;padding:0;color:#949ba4;font-weight:700}
+:root[data-sky="dark"] .chan{color:#949ba4;font-weight:500;padding:6px 8px;border-radius:4px;margin:1px 0}
+:root[data-sky="dark"] .chan:hover{background:#35373c;color:#dbdee1}
+:root[data-sky="dark"] .chan.unread{color:#f2f3f5;font-weight:600}
+:root[data-sky="dark"] .chan.active{background:#404249;color:#fff}
+:root[data-sky="dark"] .me{background:#232428;padding:8px 8px 8px 8px;min-height:52px}
+:root[data-sky="dark"] .me b{color:var(--head);font-weight:600}
+:root[data-sky="dark"] .me .icon-btn{border-radius:4px}
+:root[data-sky="dark"] .me .icon-btn:hover{background:#3d3e45}
+/* chat */
+:root[data-sky="dark"] .chat{background:#313338}
+:root[data-sky="dark"] .topbar{border-bottom:1px solid #26272b;box-shadow:0 1px 0 #0000001a;min-height:48px;padding:0 12px 0 16px}
+:root[data-sky="dark"] .topbar h1,:root[data-sky="dark"] .topbar h1.sign{font-family:var(--body);font-size:16px;font-weight:700;color:var(--head);padding:0}
+:root[data-sky="dark"] .topbar p{color:#b5bac1;border-left-color:#3f4147}
+:root[data-sky="dark"] .topbar .icon-btn,:root[data-sky="dark"] .compose .icon-btn{filter:grayscale(1) brightness(1.5);opacity:.7}
+:root[data-sky="dark"] .topbar .icon-btn:hover,:root[data-sky="dark"] .compose .icon-btn:hover,:root[data-sky="dark"] .topbar .icon-btn[aria-pressed="true"]{opacity:1;background:none}
+:root[data-sky="dark"] .welcome h2,:root[data-sky="dark"] .welcome h2.sign{font-family:var(--body);font-size:32px;font-weight:800;color:var(--head);transform:none;padding:0;margin:4px 0 8px}
+:root[data-sky="dark"] .welcome p{color:#b5bac1}
+:root[data-sky="dark"] .msg{border-radius:0;padding:2px 16px 2px 8px;margin:0 -16px 0 -8px}
+:root[data-sky="dark"] .msg:not(.cont){margin-top:14px}
+:root[data-sky="dark"] .msg:hover{background:#2e3035}
+:root[data-sky="dark"] .msg .name,:root[data-sky="dark"] .msg b.name{color:var(--head);font-weight:600}
+:root[data-sky="dark"] .msg .tools{background:#313338;border:1px solid #26272b;border-radius:8px;box-shadow:0 4px 12px #0005}
+:root[data-sky="dark"] .msg .tools button:hover{background:#3d3e45}
+:root[data-sky="dark"] .react{background:#2b2d31;border:1px solid transparent;border-radius:8px}
+:root[data-sky="dark"] .react.mine{background:#5865f226;border-color:#5865f2}
+:root[data-sky="dark"] .msg code{background:#2b2d31;border:1px solid #1e1f22}
+:root[data-sky="dark"] .compose form{background:#383a40;border-radius:8px;padding:2px 6px}
+:root[data-sky="dark"] .compose form:focus-within{box-shadow:none}
+:root[data-sky="dark"] .divider span,:root[data-sky="dark"] .day-sep{color:#949ba4}
+/* members */
+:root[data-sky="dark"] .troop{background:#2b2d31}
+:root[data-sky="dark"] .board{background:#232428;border-radius:8px}
+:root[data-sky="dark"] .board-row:hover{background:#35373c}
+/* buttons, cards, inputs */
+:root[data-sky="dark"] .btn{border-radius:4px}
+:root[data-sky="dark"] .btn.primary,:root[data-sky="dark"] .big-btn{background:#5865f2;color:#fff;border-color:#5865f2;box-shadow:none;text-shadow:none}
+:root[data-sky="dark"] .btn.primary:hover,:root[data-sky="dark"] .big-btn:hover{background:#4752c4}
+:root[data-sky="dark"] .card{background:#313338;border-color:#1e1f22;box-shadow:0 8px 32px #000a}
+:root[data-sky="dark"] .field input,:root[data-sky="dark"] .field textarea,:root[data-sky="dark"] .field select{background:#1e1f22;border-color:#1e1f22;color:#dbdee1}
+:root[data-sky="dark"] .modal{background:#000000b3;backdrop-filter:none}
+:root[data-sky="dark"] .toast{box-shadow:0 8px 24px #0008}
+:root[data-sky="dark"] #petals{display:none}
+:root[data-sky="dark"] .owner-sign,:root[data-sky="dark"] .role-sign{background:none!important;border:0!important;box-shadow:none!important;color:#949ba4!important;padding:0!important;text-shadow:none!important}
+:root[data-sky="dark"] .role-sign{color:var(--rc)!important}
+:root[data-sky="dark"] .compose .hint{display:none}
+:root[data-sky="dark"] .auth-head h2{font-weight:800;color:#f2f3f5}
+:root[data-sky="dark"] .toast{background:#111214;color:#dbdee1;border:1px solid #2b2d31}
+:root[data-sky="dark"] .toast.big{background:#5865f2;color:#fff;font-family:var(--body);font-weight:700;font-size:16px}
+@media (min-width:821px){ :root[data-sky="dark"] .compose .send{display:none} }
 </style>
 
 </head>
@@ -1453,6 +1546,7 @@ body.compact .day{margin:8px 0 2px}
       <button class="icon-btn" id="savedBtn" aria-label="Saved messages" title="Saved messages">🔖</button>
       <button class="icon-btn" id="pinsBtn" aria-label="Pinned messages" title="Pinned messages">📌</button>
       <button class="icon-btn" id="searchBtn" aria-label="Search this channel" title="Search this channel" aria-pressed="false">🔍</button>
+      <button class="icon-btn more-btn" id="moreBtn" aria-label="More buttons" title="More" aria-expanded="false">⋯</button>
       <button class="icon-btn troop-btn" id="troopBtn" aria-label="Show members" title="Members">👥</button>
     </div>
     <div class="searchbar" id="searchbar" hidden>
@@ -1825,10 +1919,11 @@ local.seen = local.seen||{};
 S.status = ["online","idle","dnd","invisible"].includes(local.status) ? local.status : "online";
 const saveLocal = ()=>{ try{ localStorage.setItem(LS, JSON.stringify(local)); }catch(e){} };
 function applySky(){
-  const sky=local.sky==="night"?"night":"day";
+  if(!local.skyV2){ local.sky="dark"; local.skyV2=1; try{ saveLocal(); }catch(e){} }
+  const sky=["night","dark"].includes(local.sky)?local.sky:"day";
   document.documentElement.dataset.sky=sky;
-  const b=document.getElementById("skyBtn"); if(b) b.textContent = sky==="day"?"☀️":"🌙";
-  const a=document.getElementById("authSky"); if(a) a.textContent = sky==="day"?"🌙 Switch to night":"☀️ Switch to day";
+  const b=document.getElementById("skyBtn"); if(b) b.textContent = sky==="day"?"☀️":sky==="night"?"🌙":"🌑";
+  const a=document.getElementById("authSky"); if(a) a.textContent = sky==="dark"?"☀️ Switch to day":sky==="day"?"🌙 Switch to night":"🌑 Switch to dark";
 }
 applySky();
 try{ document.documentElement.style.setProperty("--fs",(+local.font||15)+"px"); if(local.compact) document.addEventListener("DOMContentLoaded",()=>document.body.classList.add("compact")); }catch(e){}
@@ -2091,7 +2186,7 @@ function renderJoinGate(){
   const out=S.practiceWhy==="signedout";
   body.innerHTML=`<div class="auth-head"><h2>${out?"Sign in to join the troop":"Almost there!"}</h2></div>
     <div class="join-steps">${out
-      ? `<p>Gorilla Yapps is a shared hangout, so you need to be signed in to Claude to chat with everyone.</p><ol class="steps"><li>Tap <b>Sign in</b> at the top right of this page.</li><li>Come back here. Your gorilla will be waiting!</li></ol>`
+      ? `<p>Gorilla Yapps is a shared hangout, so you need to be signed in to chat with everyone.</p><ol class="steps"><li>Tap <b>Sign in</b> at the top right of this page.</li><li>Come back here. Your gorilla will be waiting!</li></ol>`
       : `<p>You're signed in, but Gorilla Yapps can't tell who you are yet, so you can't join the shared chat.</p><ol class="steps"><li>Ask the owner to tap <b>Share</b> on Gorilla Yapps and add your email.</li><li>Open the page again with that account.</li></ol>`}</div>
     <button class="big-btn" id="joinReload">I did it, check again</button>`;
   $("joinReload").onclick=()=>location.reload();
@@ -2989,7 +3084,7 @@ async function uploadImage(file){
   if(!S.assets) return;
   if(!/^image\/(png|jpeg|gif|webp)$/.test(file.type)){ toast("Pick a PNG, JPG, GIF or WebP image."); return; }
   if(file.size>15*1024*1024){ toast("That image is over 15 MB. Try a smaller one."); return; }
-  if(!picCheckerReady()){ toast("Pictures can't be sent here because the safety checker isn't available."); return; }
+  if(!picCheckerReady()){ toast("Pictures can't be sent here because the picture filter isn't available."); return; }
   toast("🛡 Checking your picture…");
   { const frames=[];
     try{
@@ -3651,7 +3746,7 @@ function renderPractice(){
   const b=$("practiceBar"); if(!b) return;
   if(!S.practiceWhy || local.practiceHide){ b.hidden=true; return; }
   b.hidden=false;
-  b.innerHTML=`<span>🧪 <b>Practice mode.</b> ${S.practiceWhy==="signedout"?"You're not signed in to Claude, so":"Gorilla Yapps doesn't know who you are yet, so"} only you can see your messages here, and the other gorillas are bots. To chat with the real troop, ${S.practiceWhy==="signedout"?"sign in to Claude, then ":""}ask the owner to invite you: they tap <b>Share</b> and add your email.</span><button type="button" class="icon-btn" id="practiceX" aria-label="Hide this message">✕</button>`;
+  b.innerHTML=`<span>🧪 <b>Practice mode.</b> ${S.practiceWhy==="signedout"?"You're not signed in, so":"Gorilla Yapps doesn't know who you are yet, so"} only you can see your messages here, and the other gorillas are bots. To chat with the real troop, ${S.practiceWhy==="signedout"?"sign in, then ":""}ask the owner to invite you: they tap <b>Share</b> and add your email.</span><button type="button" class="icon-btn" id="practiceX" aria-label="Hide this message">✕</button>`;
   $("practiceX").onclick=()=>{ local.practiceHide=1; saveLocal(); renderPractice(); };
 }
 function renderFeed(){
@@ -4487,8 +4582,8 @@ function mediaSettingsHTML(p){
   </div>
   <input type="file" id="mpFile" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
   <p class="note" style="text-align:left;margin:0">${canUp
-    ? (ON_SITE() ? "🛡 A safety checker looks at every picture before anyone sees it. Nothing rude, scary, violent or grown-up, no photos of other people without asking, and never personal info like your address or school. Animated GIFs up to 480 KB stay animated." : "🛡 A safety bot checks every picture before anyone sees it. Nothing rude, scary, violent or grown-up, no photos of other people without asking, and never personal info like your address or school. GIFs can be animated. Max 8 MB.")
-    : S.readonly ? "You can't change pictures right now." : "Custom pictures need the safety checker, which isn't available here. Your gorilla still works great!"}</p>`;
+    ? (ON_SITE() ? "🛡 A picture filter checks every picture before anyone sees it. Nothing rude, scary, violent or grown-up, no photos of other people without asking, and never personal info like your address or school. Animated GIFs up to 480 KB stay animated." : "🛡 A picture filter checks every picture before anyone sees it. Nothing rude, scary, violent or grown-up, no photos of other people without asking, and never personal info like your address or school. GIFs can be animated. Max 8 MB.")
+    : S.readonly ? "You can't change pictures right now." : "Custom pictures need the picture filter, which isn't available here. Your gorilla still works great!"}</p>`;
 }
 function wireMediaSettings(){
   const body=$("modal").querySelector(".set-body"); if(!body) return;
@@ -4530,7 +4625,7 @@ function cropTo(src, W, H, type, q){
 async function checkPicture(images, kind){
   if(!S.sample) return nsfwCheck(images);
   const many=images.length>1;
-  const prompt=`You are the safety checker for Gorilla Yapps, a chat app where many players are kids, some under 13. A player wants to use the attached image${many?"s (frames from ONE animated picture; judge them all)":""} as ${kind==="avatar"?"their profile picture":kind==="banner"?"their profile banner":kind==="srvIcon"?"the icon of a chat server":kind==="srvBanner"?"the banner of a chat server":"a picture in a chat message"}.
+  const prompt=`You are the picture filter for Gorilla Yapps, a chat app where many players are kids, some under 13. A player wants to use the attached image${many?"s (frames from ONE animated picture; judge them all)":""} as ${kind==="avatar"?"their profile picture":kind==="banner"?"their profile banner":kind==="srvIcon"?"the icon of a chat server":kind==="srvBanner"?"the banner of a chat server":"a picture in a chat message"}.
 Say NOT OK if anything shows: nudity, underwear or swimsuit focus, sexual or suggestive content; blood, gore, injuries or violence; weapons pointed at people; hate symbols, slurs or rude gestures; drugs, alcohol, smoking or vaping; swear words or mean text; scary or disturbing horror images; personal information such as a home address, phone number, school name, license plate or ID card; a screenshot of someone's private messages.
 Say OK for cartoons, game characters and screenshots, animals, scenery, food, art, clean memes, logos and ordinary photos.
 Reply with only JSON: {"ok": true} or {"ok": false, "reason": "<short friendly reason a kid understands, at most 12 words>"}`;
@@ -4541,10 +4636,10 @@ Reply with only JSON: {"ok": true} or {"ok": false, "reason": "<short friendly r
   }catch(e){
     const c=e&&e.code;
     if(c==="refused") return {ok:false, reason:"It doesn't follow the picture rules."};
-    throw new Error(c==="not_granted"?"The safety checker needs your OK. Allow Claude for this page, then try again."
+    throw new Error(c==="not_granted"?"The picture filter needs your OK. Try again."
       : c==="rate_limited"?"Too many checks right now. Try again in a few minutes."
       : c==="image_rejected"?"That picture couldn't be read. Try a different one."
-      : c==="images_unavailable"||c==="sampling_disabled"?"The safety checker isn't available here, so pictures can't be uploaded."
+      : c==="images_unavailable"||c==="sampling_disabled"?"The picture filter isn't available here, so pictures can't be uploaded."
       : "Couldn't check your picture. Try again.");
   }
 }
@@ -4561,7 +4656,7 @@ async function handleMedia(file, kind, say, save){
     try{ dec=await decodeFrames(file); }catch(e){ say("That picture couldn't be opened. Try another one.","bad"); return; }
     frames.push(...dec.frames);
     const lim=S.sample ? await S.sample.limits().catch(()=>null) : {images:{maxCount:4}};
-    if(!lim || !lim.images){ say("The safety checker can't look at pictures here, so uploads are off.","bad"); return; }
+    if(!lim || !lim.images){ say("The picture filter can't look at pictures here, so uploads are off.","bad"); return; }
     const sq=SQUARE_KINDS.includes(kind), big=sq?[512,512]:[1024,342], small=sq?[256,256]:[960,320];
     const checks=[];
     for(const f of frames.slice(0, Math.max(1,lim.images.maxCount||1))) checks.push(await cropTo(f,big[0],big[1],"image/jpeg",.85));
@@ -5121,7 +5216,7 @@ function openUserSettings(tab){
       <label class="set-toggle"><span><b>Noise suppression</b><small>Cuts out background noise like fans and keyboards</small></span><input type="checkbox" id="setNS" ${local.noNS?"":"checked"}><i aria-hidden="true"></i></label></div>
       <p class="note" style="text-align:left">Join a voice channel to talk with your microphone, turn on your camera, or share your screen. Your browser asks for permission the first time. You can also type to talk: everyone in the room hears your typed lines in this voice.</p>`; } break;
     case "appearance": body=`<h2>Appearance</h2><div class="set-group">
-      <div class="set-row"><span><b>Theme</b><small>Pastel day sky or dark night jungle</small></span><div class="seg"><button type="button" data-skypick="day" aria-pressed="${local.sky!=="night"}">☀️ Day</button><button type="button" data-skypick="night" aria-pressed="${local.sky==="night"}">🌙 Night</button></div></div>
+      <div class="set-row"><span><b>Theme</b><small>Dark gray, pastel day sky, or night jungle</small></span><div class="seg"><button type="button" data-skypick="dark" aria-pressed="${local.sky==="dark"}">🌑 Dark</button><button type="button" data-skypick="day" aria-pressed="${local.sky!=="night"&&local.sky!=="dark"}">☀️ Day</button><button type="button" data-skypick="night" aria-pressed="${local.sky==="night"}">🌙 Night</button></div></div>
       ${toggle("setCompact",local.compact,"Compact messages","Fit more messages on screen")}
       <label class="set-slider"><b>Text size</b><input type="range" id="setFont" min="13" max="19" step="1" value="${+local.font||15}"><small id="setFontVal">${+local.font||15}px</small></label></div>
       ${ON_SITE()?`<h3 class="set-h">📲 App</h3><div class="set-group"><div class="set-row"><span><b>Install Gorilla Yapps</b><small>${installText()}</small></span>${S.installEvt?`<button type="button" class="btn primary" id="setInstall">Install</button>`:""}${isStandalone()?"":`<button type="button" class="btn" data-getapp>📲 How to</button>`}</div></div>`:""}`; break;
@@ -5136,7 +5231,7 @@ function openUserSettings(tab){
       </div><h3 class="set-h">Two-step login</h3>
       <div class="set-group"><div class="set-row"><span><b>${S.sec&&S.sec.on?"🔐 On":"Off"}</b><small>${S.sec&&S.sec.on?`Logging in asks for a code from your authenticator app. ${(S.sec.backup||[]).length} backup codes left.`:"Ask for a 6-digit code from an authenticator app every time you log in."}</small></span>${S.sec&&S.sec.on?`<button class="danger-btn" id="tfOff">Turn off</button>`:`<button class="btn primary" id="tfOn">Set up</button>`}</div>
       ${S.sec&&S.sec.on&&trusted()?`<div class="set-row"><span><b>This browser is trusted</b><small>It won't ask for a code here for a while.</small></span><button class="btn" id="tfForget">Forget this browser</button></div>`:""}</div>
-      <p class="note" style="text-align:left">This adds a lock inside Gorilla Yapps. Keep your Claude account login safe too, because that's what signs you in.</p>
+      <p class="note" style="text-align:left">This adds a lock inside Gorilla Yapps. Keep your password secret too, and never share it.</p>
       <h3 class="set-h">Blocked gorillas</h3>
       ${bl.length?`<div class="set-group">${bl.map(u=>`<div class="set-row"><span style="display:flex;align-items:center;gap:10px"><span class="av sm">${av(prof(u))}</span><b>${esc(prof(u).name)}</b></span><button class="btn" data-unblock="${esc(u)}">Unblock</button></div>`).join("")}</div>`:`<p class="note" style="text-align:left">You haven't blocked anyone. Open someone's profile and tap Block to hide their messages, DMs and voice.</p>`}
       <h3 class="set-h">Stay safe</h3><p class="note" style="text-align:left">Never share your real name, address, school, phone number or passwords. If someone makes you uncomfortable, block them and tell a trusted adult.</p>`; } break;
@@ -5297,7 +5392,7 @@ function openServerSettings(){
         <div class="field"><span class="lbl">Server picture &amp; banner</span>
           <div class="ss-pics"><div class="ss-pic-prev">${m.iconImg?`<img src="${esc(mediaSrc(m.iconImg))}" alt="">`:`<span>${esc(m.short)}</span>`}</div>
           ${S.assets&&picCheckerReady()?`<button type="button" class="btn" data-spick="srvIcon">🖼️ ${m.iconImg?"Change":"Upload"} picture</button>${m.iconImg?`<button type="button" class="danger-btn" data-sdel="iconImg">Remove</button>`:""}
-          <button type="button" class="btn" data-spick="srvBanner">🌄 ${m.bannerImg?"Change":"Upload"} banner</button>${m.bannerImg?`<button type="button" class="danger-btn" data-sdel="bannerImg">Remove</button>`:""}`:`<small class="note">Picture uploads need the safety checker, which isn't available here.</small>`}</div>
+          <button type="button" class="btn" data-spick="srvBanner">🌄 ${m.bannerImg?"Change":"Upload"} banner</button>${m.bannerImg?`<button type="button" class="danger-btn" data-sdel="bannerImg">Remove</button>`:""}`:`<small class="note">Picture uploads need the picture filter, which isn't available here.</small>`}</div>
           <div class="mp-status" id="ssPicStatus" role="status"></div><input type="file" id="ssPicFile" accept="image/png,image/jpeg,image/gif,image/webp" hidden></div>
         <div class="field"><label for="ssDesc">Description</label><input id="ssDesc" maxlength="120" placeholder="What's this server about?" value="${esc(d.desc)}"></div>
         <div class="field"><span class="lbl">Icon</span><div class="chips">${SERVER_ICONS.concat(["🏜️","🌊","🔥","🎯"]).map(i=>`<button type="button" class="chip" data-icon="${i}" aria-pressed="${i===d.icon}" style="font-size:18px">${i}</button>`).join("")}</div></div>
@@ -5736,7 +5831,7 @@ $("feed").addEventListener("submit",e=>{ if(e.target.matches("[data-editform]"))
 $("stage").addEventListener("click",e=>{ const p=e.target.closest(".tile[data-profile]"); if(p && !e.target.closest("button,input")) openPopout(p.dataset.profile, p); });
 $("troop").addEventListener("click",e=>{ const p=e.target.closest("[data-profile]"); if(p) openPopout(p.dataset.profile, p); });
 $("meAv").onclick=()=>{ const m=$("statusMenu"); if(m.hidden) openStatusMenu(); else m.hidden=true; };
-function toggleSky(){ local.sky = local.sky==="night"?"day":"night"; saveLocal(); applySky(); window.__petals&&window.__petals(); }
+function toggleSky(){ local.sky = local.sky==="dark"?"day":local.sky==="day"?"night":"dark"; saveLocal(); applySky(); window.__petals&&window.__petals(); }
 $("skyBtn").onclick=toggleSky; $("authSky").onclick=toggleSky;
 $("settingsBtn").onclick=()=>openUserSettings("account");
 $("soundBtn").onclick=()=>{ local.mute=!local.mute; saveLocal(); renderMe(); if(!local.mute){ ook(); } toast(local.mute?"Mention sounds off":"Mention sounds on"); };
@@ -5792,6 +5887,7 @@ $("feed").addEventListener("scroll",()=>{ const f=$("feed"); if(f.scrollTop<150 
 $("fileInput").onchange=e=>{ const f=e.target.files[0]; e.target.value=""; if(f) uploadImage(f); };
 $("menu").onclick=()=>$("app").classList.add("open");
 $("troopBtn").onclick=()=>$("app").classList.add("troop-open");
+$("moreBtn").onclick=()=>{ const tb=$("moreBtn").closest(".topbar"), on=!tb.classList.contains("more-open"); tb.classList.toggle("more-open",on); $("moreBtn").setAttribute("aria-expanded",on); };
 $("scrim").onclick=()=>$("app").classList.remove("open","troop-open");
 document.addEventListener("paste",e=>{
   if(!S.loggedIn || !S.assets || S.readonly) return;
