@@ -807,6 +807,71 @@ a{color:var(--link)}
 .deco-electricring{background:conic-gradient(#2bf0ff,#fff,#4a6bff,#ffe04d,#2bf0ff);animation:decoSpin 1.2s linear infinite,decoFlicker 1.7s steps(3) infinite;filter:drop-shadow(0 0 5px #2bf0ff)}
 .deco-galaxyring{background:conic-gradient(#2a1250,#7b3fe4,#e355aa,#3f9ce3,#2a1250);animation:decoSpin 6s linear infinite;filter:drop-shadow(0 0 4px #7b3fe4)}
 .deco-auraring{background:conic-gradient(#fff3b0,#ffd23f,#e0a21c,#fff3b0,#ffd23f,#fff3b0);animation:decoSpin 4s linear infinite,decoPulse 2s ease-in-out infinite;filter:drop-shadow(0 0 6px #ffd23f)}
+.deco-vinering{background:repeating-conic-gradient(#2c6e35 0 9deg,#5fbf4a 9deg 18deg,#ff8fc8 18deg 21deg,#2c6e35 21deg 30deg);animation:decoSpin 16s linear infinite;filter:drop-shadow(0 0 3px #5fbf4a)}
+.deco-legendring{background:conic-gradient(#ffd23f,#ff5fa2,#7fd9ff,#a6ff00,#ffd23f);animation:decoSpin 2s linear infinite,decoPulse 1.6s ease-in-out infinite;filter:drop-shadow(0 0 8px #ffd23f)}
+.nc-sunrise,.nc-royal{-webkit-background-clip:text;background-clip:text;color:transparent!important;-webkit-text-fill-color:transparent;background-size:200% 100%;animation:rainbowMove 3s linear infinite}
+.nc-sunrise{background-image:linear-gradient(90deg,#ff5f9e,#ff9a3c,#ffd23f,#ff9a3c,#ff5f9e)}
+.nc-royal{background-image:linear-gradient(90deg,#7b3fe4,#ffd23f,#b46bff,#ffd23f,#7b3fe4);filter:drop-shadow(0 0 3px #b46bff88)}
+.shop2 .shop-item.r-x{background:linear-gradient(180deg,#e0457b22,var(--canopy));border-color:#e0457b}
+.shop2 .shop-item.r-x .rar{background:linear-gradient(90deg,#e0457b,#ff9a3c)}
+.daily2 .dl-sec{display:flex;flex-direction:column;gap:8px}
+.daily2 h3{margin:4px 0 0;font-size:15px;display:flex;align-items:center;gap:8px}
+.daily2 h3 small{margin-left:auto;font-weight:500;color:var(--fog-dim);font-size:12px}
+.quest{display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--canopy);border:2px solid var(--vine)}
+.quest.done{border-color:var(--online);background:color-mix(in srgb,var(--online) 10%,var(--canopy))}
+.quest .qi{font-size:22px;text-align:center}
+.quest b{display:block;font-size:14px}
+.qbar{height:8px;border-radius:6px;background:var(--leaf);overflow:hidden;margin-top:5px}
+.qbar i{display:block;height:100%;background:linear-gradient(90deg,#ffd23f,#ff8a2b);border-radius:6px;transition:width .3s}
+.quest.done .qbar i{background:var(--online)}
+.quest .qr{font-weight:700;font-size:13px;white-space:nowrap}
+.qbonus{font-size:13px;text-align:center;padding:8px;border-radius:10px;border:2px dashed var(--vine)}
+.qbonus.got{border-style:solid;border-color:#e0a21c;background:#ffd23f22}
+.dl-row{display:flex;gap:8px;flex-wrap:wrap}.dl-row .btn{flex:1;min-width:140px;position:relative}
+.dl-row .btn .ping{position:absolute;top:-8px;right:-6px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#e5343d;color:#fff;font-size:12px;font-weight:800;display:grid;place-items:center;line-height:1}
+.road{display:flex;flex-direction:column;gap:8px;max-height:min(60vh,520px);overflow:auto;padding:2px 4px 2px 2px}
+.road-step{display:grid;grid-template-columns:52px 64px 1fr auto;align-items:center;gap:10px;padding:8px 12px;border-radius:14px;background:var(--canopy);border:2px solid var(--vine);position:relative}
+.road-step .lvl{font-family:var(--display);font-size:18px;text-align:center;line-height:1}
+.road-step .lvl small{display:block;font-family:inherit;font-size:10px;color:var(--fog-dim);font-weight:700}
+.road-step .rp{display:grid;place-items:center;height:56px;position:relative;overflow:hidden;border-radius:10px}
+.road-step .rp .bn{font-size:26px}
+.road-step.ready{border-color:#e0a21c;box-shadow:0 0 0 3px #ffd23f44;animation:roadGlow 1.6s ease-in-out infinite}
+.road-step.got{opacity:.75;border-color:var(--online)}
+.road-step.locked .rp{filter:grayscale(.8);opacity:.6}
+@keyframes roadGlow{50%{box-shadow:0 0 0 6px #ffd23f22}}
+.road-top{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:14px;background:linear-gradient(90deg,var(--leaf),var(--canopy));border:2px solid var(--vine)}
+.road-top .meter{flex:1}
+.gift-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px;max-height:min(46vh,380px);overflow:auto;padding:2px}
+.gift-it{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 6px;border-radius:12px;border:2px solid var(--vine);background:var(--canopy);cursor:pointer;font:inherit;color:inherit;font-size:12px}
+.gift-it[aria-pressed="true"]{border-color:var(--lava);box-shadow:0 0 0 3px #ff6a2b33}
+.gift-it .shop-prev{height:52px;margin:0;display:grid;place-items:center;position:relative;overflow:hidden;width:100%}
+.gift-it .rar2{font-size:10px;font-weight:800;text-transform:uppercase}
+.gift-card{display:flex;align-items:center;gap:14px;padding:12px;border-radius:14px;border:2px solid var(--vine);background:var(--canopy)}
+.gift-card .gc-body{flex:1;min-width:0}
+.gift-card .gc-body i{display:block;font-size:13px;color:var(--fog-dim);font-style:normal;overflow-wrap:anywhere}
+.gift-card .shop-prev{width:72px;height:72px;display:grid;place-items:center;position:relative;overflow:hidden;flex:none}
+@media (max-width:720px){.road-step{grid-template-columns:44px 52px 1fr;}.road-step>.btn,.road-step>.rs-state{grid-column:1/-1}}
+.getapp{width:min(620px,100%)}
+.ga-hero{display:flex;align-items:center;gap:16px;padding:16px;border-radius:16px;background:linear-gradient(120deg,#2e7d32,#5fbf4a);color:#fff}
+.ga-hero img{width:72px;height:72px;border-radius:18px;box-shadow:0 4px 14px #0004;flex:none;background:#fff}
+.ga-hero h3{margin:0;font-family:var(--display);font-size:22px}
+.ga-hero p{margin:4px 0 0;opacity:.95;font-size:14px}
+.ga-perks{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.ga-perks div{padding:10px;border-radius:12px;background:var(--canopy);border:2px solid var(--vine);font-size:13px;text-align:center}
+.ga-perks b{display:block;font-size:22px;margin-bottom:2px}
+.ga-dev{display:flex;gap:6px;flex-wrap:wrap}
+.ga-dev button{flex:1;min-width:100px}
+.ga-steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;counter-reset:st}
+.ga-steps li{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-radius:12px;background:var(--canopy);border:2px solid var(--vine);font-size:14px;line-height:1.4}
+.ga-steps li::before{counter-increment:st;content:counter(st);flex:none;width:26px;height:26px;border-radius:50%;background:var(--lava);color:#fff;font-weight:800;display:grid;place-items:center}
+.ga-steps kbd{font-family:inherit;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--leaf);border:1px solid var(--vine)}
+.ga-share{display:flex;gap:14px;align-items:center;padding:12px;border-radius:14px;border:2px dashed var(--vine)}
+.ga-qr{width:112px;height:112px;flex:none;border-radius:10px;background:#fff;display:grid;place-items:center;padding:6px}
+.ga-qr svg{width:100%;height:100%}
+.ga-share .ga-link{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.ga-share code{display:block;padding:8px;border-radius:8px;background:var(--leaf);overflow-wrap:anywhere;font-size:13px}
+.ga-done{padding:14px;border-radius:14px;background:color-mix(in srgb,var(--online) 14%,var(--canopy));border:2px solid var(--online);text-align:center;font-weight:700}
+@media (max-width:560px){.ga-perks div{font-size:11px;padding:8px 4px}.ga-perks b{font-size:18px}.ga-share{flex-direction:column;text-align:center}.ga-hero img{width:56px;height:56px}}
 @keyframes decoFlicker{50%{opacity:.6}}
 @keyframes decoPulse{50%{filter:drop-shadow(0 0 12px #ffd23f)}}
 @keyframes decoSpin{to{transform:rotate(360deg)}}
@@ -1350,7 +1415,7 @@ body.compact .day{margin:8px 0 2px}
       <div id="authBody"><div class="spinner">Waking up the gorillas…</div></div>
     </div>
     <div class="note" id="authNote"></div>
-    <div class="auth-links"><button type="button" class="link-btn" data-doc="rules">Rules</button> · <button type="button" class="link-btn" data-doc="privacy">Privacy Notice</button></div>
+    <div class="auth-links"><button type="button" class="link-btn" data-doc="rules">Rules</button> · <button type="button" class="link-btn" data-doc="privacy">Privacy Notice</button><span id="authApp"></span></div>
     <p class="fanmade">Fan-made project. Not affiliated with any game studio or chat company.</p>
     <div style="display:flex;justify-content:center"><button class="btn" id="authSky" type="button"></button></div>
   </div>
@@ -1476,18 +1541,19 @@ const SHOP = {
   face:[["wink","Wink",30,"c"],["silly","Silly",30,"c"],["cool","Too cool",40,"r"],["dizzy","Dizzy",50,"r"],["starry","Starry eyes",60,"e"],["hearteyes","Heart eyes",80,"e"],["robot","Robot eyes",200,"l"]],
   acc:[["blush","Blush",20,"c"],["bandaid","Bandage",20,"c"],["clown","Clown nose",25,"c"],["shades","Sunglasses",30,"c"],["nerd","Nerd glasses",30,"c"],["mustache","Mustache",35,"r"],["patch","Eye patch",40,"r"],["monocle","Monocle",45,"r"],["heartshades","Heart shades",70,"e"],["vr","VR headset",100,"e"],["visor","Laser visor",220,"l"]],
   pattern:[["spots","Spots",30,"c"],["stripes","Stripes",35,"c"],["camo","Camo",45,"r"],["cow","Cow",45,"r"],["frost","Frost",50,"r"],["tiger","Tiger",55,"r"],["zebra","Zebra",55,"r"],["sparkle","Sparkle",60,"r"],["sunset","Sunset",80,"e"],["glitter","Glitter",90,"e"],["galaxyfur","Galaxy fur",120,"e"],["lavafur","Lava fur",180,"l"]],
-  color:[["lava","Lava",20,"c"],["ocean","Ocean",20,"c"],["jungle","Jungle",20,"c"],["bubblegum","Bubblegum",25,"c"],["ice","Ice",60,"r"],["toxic","Toxic",60,"r"],["dusk","Dusk",70,"r"],["gold","Gold",60,"e"],["galaxy","Galaxy",80,"e"],["neon","Neon glow",90,"e"],["rainbow","Rainbow",100,"e"],["chrome","Chrome",120,"e"],["fire","Fire",150,"l"],["glitch","Glitch",220,"l"]],
-  deco:[["leafring","Leaf ring",40,"c"],["lavaring","Lava ring",60,"r"],["frostring","Frost ring",60,"r"],["flowerring","Flower ring",70,"r"],["bananaring","Banana ring",80,"r"],["slimering","Slime ring",80,"r"],["heartring","Heart ring",90,"e"],["rainbowring","Rainbow ring",120,"e"],["electricring","Electric ring",150,"e"],["galaxyring","Galaxy ring",160,"e"],["auraring","Golden aura",300,"l"]],
-  effect:[["sparkles","Sparkles",60,"r"],["leaves","Falling leaves",60,"r"],["bubbles","Bubbles",70,"r"],["bananas","Banana rain",80,"r"],["hearts","Floating hearts",90,"e"],["confetti","Confetti",120,"e"],["embers","Lava embers",150,"e"],["stars","Shooting stars",250,"l"]]
+  color:[["lava","Lava",20,"c"],["ocean","Ocean",20,"c"],["jungle","Jungle",20,"c"],["bubblegum","Bubblegum",25,"c"],["ice","Ice",60,"r"],["toxic","Toxic",60,"r"],["dusk","Dusk",70,"r"],["gold","Gold",60,"e"],["galaxy","Galaxy",80,"e"],["neon","Neon glow",90,"e"],["rainbow","Rainbow",100,"e"],["chrome","Chrome",120,"e"],["fire","Fire",150,"l"],["glitch","Glitch",220,"l"],["sunrise","Sunrise",0,"x",5],["royal","Royal",0,"x",20]],
+  deco:[["leafring","Leaf ring",40,"c"],["lavaring","Lava ring",60,"r"],["frostring","Frost ring",60,"r"],["flowerring","Flower ring",70,"r"],["bananaring","Banana ring",80,"r"],["slimering","Slime ring",80,"r"],["heartring","Heart ring",90,"e"],["rainbowring","Rainbow ring",120,"e"],["electricring","Electric ring",150,"e"],["galaxyring","Galaxy ring",160,"e"],["auraring","Golden aura",300,"l"],["vinering","Jungle vine ring",0,"x",15],["legendring","Champion ring",0,"x",40]],
+  effect:[["sparkles","Sparkles",60,"r"],["leaves","Falling leaves",60,"r"],["bubbles","Bubbles",70,"r"],["bananas","Banana rain",80,"r"],["hearts","Floating hearts",90,"e"],["confetti","Confetti",120,"e"],["embers","Lava embers",150,"e"],["stars","Shooting stars",250,"l"],["snow","Snowfall",0,"x",10],["crowns","Crown shower",0,"x",30]]
 };
 const SHOP_LABEL={hat:"Hats",face:"Faces",acc:"Accessories",pattern:"Fur patterns",color:"Name colors",deco:"Avatar rings",effect:"Profile effects"};
 const SHOP_ICON={hat:"🎩",face:"😎",acc:"👓",pattern:"🎨",color:"🌈",deco:"💍",effect:"✨"};
 const SHOP_FIELD={hat:"hat",face:"face",acc:"acc",pattern:"pattern",color:"nameColor",deco:"deco",effect:"effect"};
-const RARITY={c:["Common","#8a8f99"],r:["Rare","#3f8fe6"],e:["Epic","#9b5bff"],l:["Legendary","#e0a21c"]};
+const RARITY={c:["Common","#8a8f99"],r:["Rare","#3f8fe6"],e:["Epic","#9b5bff"],l:["Legendary","#e0a21c"],x:["Exclusive","#e0457b"]};
+const xLevel = id => { for(const l of Object.values(SHOP)) for(const it of l) if(it[0]===id && it[3]==="x") return it[4]||1; return 0; };
 const itemRarity = it => it[3] || (it[2]>=200?"l":it[2]>=90?"e":it[2]>=40?"r":"c");
 function dailyDeals(){
   const day=new Date().toISOString().slice(0,10); let h=0; for(const ch of day) h=(h*31+ch.charCodeAt(0))>>>0;
-  const all=[]; Object.entries(SHOP).forEach(([cat,l])=>l.forEach(it=>all.push(it[0])));
+  const all=[]; Object.entries(SHOP).forEach(([cat,l])=>l.forEach(it=>{ if(it[3]!=="x") all.push(it[0]); }));
   const out=[]; while(out.length<4 && out.length<all.length){ h=(h*1103515245+12345)>>>0; const id=all[h%all.length]; if(!out.includes(id)) out.push(id); }
   return out;
 }
@@ -2419,7 +2485,7 @@ function joinVC(vid){
   if(isTimedOut()){ toast("You're timed out and can't join voice right now."); return; }
   if(S.vc!==vid){
     if(S.vc) stopVoice();
-    S.vc=vid; S.speaking={}; S.said={}; toast("Joined "+vcName(vid)); playSfx("cheer", true);
+    S.vc=vid; S.speaking={}; S.said={}; toast("Joined "+vcName(vid)); playSfx("cheer", true); questTick("vc");
     if(S.fb) startVoice();
   }
   S.view="vc"; syncPresence(); renderChans(); renderStage(); demoVcChatter();
@@ -2725,6 +2791,7 @@ function switchTo(){
   $("searchInput").value=""; $("searchbar").hidden=true; $("searchBtn").setAttribute("aria-pressed","false");
   S.msgs=[]; S.loading=true; S.view="chat"; renderStage && $("stage") && renderStage();
   const k=key();
+  if(S.loggedIn && S.chan) questTick("chans",1,k);
   S.dividerTs = local.seen[k];
   if((S.mapId==="home" && !S.chan) || isRulesChan()){ S.loading=false; renderAll(); syncPresence(); return; }
   S.msgLimit=100; S.loadingOlder=false; S.keepAnchor=null;
@@ -2851,7 +2918,8 @@ function earnBanana(){
     const after=levelOf(xp);
     if(after>before){
       const unlocked=HATS.concat(FACES).filter(x=>x[2]===after).map(x=>x[1]);
-      toast(`Level up! You're level ${after}`+(unlocked.length?` · Unlocked: ${unlocked.join(", ")}`:""), true);
+      const road=LEVEL_ROAD.some(([l])=>l>before && l<=after);
+      toast(`Level up! You're level ${after}`+(unlocked.length?` · Unlocked: ${unlocked.join(", ")}`:"")+(road?" · 🎁 Level road reward ready!":""), true);
     }
   });
 }
@@ -2865,7 +2933,7 @@ async function send(payload){
   if(isRulesChan() && S.mapId!=="home") return;
   if(S.mapId==="home" && (S.blocks.has(S.chan) || prof(S.chan).dmOff)) return;
   const k0=key();
-  try{ await api.send(k0, m); setLastFor(k0, m); notifyInboxes(k0, m); S.lastSent[k0]=m.ts; earnBanana(); if(isDMChan()) api.touchDM(S.chan); if(S.mode==="demo") botReply(); }
+  try{ await api.send(k0, m); setLastFor(k0, m); notifyInboxes(k0, m); S.lastSent[k0]=m.ts; earnBanana(); questTick("msg"); if(payload.sticker) questTick("sticker"); if(payload.poll) questTick("poll"); if(isDMChan()){ api.touchDM(S.chan); questTick("dm"); } if(S.mode==="demo") botReply(); }
   catch(e){
     if(e && e.code==="invalid_argument"){ S.readonly=true; renderCompose(); toast("You can read this server but can't post yet."); }
     else if(e && e.code==="quota_exceeded") toast("This server is full of messages. Ask the owner to clear some old ones.");
@@ -2903,6 +2971,7 @@ async function toggleReact(id, emoji){
   const reacts=JSON.parse(JSON.stringify(m.reacts||{}));
   const l=reacts[emoji]||[];
   reacts[emoji] = l.includes(S.uid) ? l.filter(u=>u!==S.uid) : l.concat(S.uid);
+  if(!l.includes(S.uid)) questTick("react");
   try{ await api.update(key(), id, {reacts}); }catch(e){ toast("Couldn't add that reaction."); }
 }
 async function delMsg(id){ try{ await api.remove(key(), id); toast("Message deleted"); }catch(e){ toast("Couldn't delete that message."); } }
@@ -3293,7 +3362,7 @@ function maybeWelcome(force){
 }
 
 /* ================= install as an app ================= */
-window.addEventListener("beforeinstallprompt", e=>{ e.preventDefault(); S.installEvt=e; });
+window.addEventListener("beforeinstallprompt", e=>{ e.preventDefault(); S.installEvt=e; try{ if(S.loggedIn) renderRailExtras(); }catch(x){} });
 window.addEventListener("appinstalled", ()=>{ S.installEvt=null; });
 function installText(){
   const standalone=(()=>{ try{ return matchMedia("(display-mode: standalone)").matches || navigator.standalone; }catch(e){ return false; } })();
@@ -3303,6 +3372,67 @@ function installText(){
   if(/android/i.test(navigator.userAgent)) return "On Android: open the browser menu ⋮ and tap “Install app” or “Add to Home screen”.";
   return "In Chrome or Edge: click the install icon in the address bar, or open the menu ⋮ → “Install Gorilla Yapps”.";
 }
+
+/* ================= get the app ================= */
+const isStandalone = () => { try{ return matchMedia("(display-mode: standalone)").matches || !!navigator.standalone; }catch(e){ return false; } };
+function guessDevice(){
+  const ua=navigator.userAgent||"";
+  if(/iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints>1)) return "ios";
+  if(/android/i.test(ua)) return "android";
+  if(/cros/i.test(ua)) return "chromebook";
+  return "computer";
+}
+const GA_DEVICES={
+  computer:["💻 Computer",[
+    "Open this website in <b>Google Chrome</b> or <b>Microsoft Edge</b>.",
+    "Look at the right side of the address bar for a little <kbd>⊕</kbd> or <kbd>🖥️⬇</kbd> install icon and click it. No icon? Open the menu <kbd>⋮</kbd> (top right) and pick <b>“Install Gorilla Yapps”</b> (in Edge it's under <b>Apps</b>).",
+    "Click <b>Install</b>. Gorilla Yapps opens in its own window, and you'll find it in your Start menu or Dock like any other app.",
+    "Want it on your taskbar? Right-click the Gorilla Yapps icon on the taskbar and pick <b>Pin to taskbar</b>."]],
+  android:["🤖 Android",[
+    "Open this website in <b>Chrome</b>.",
+    "Tap the menu <kbd>⋮</kbd> in the top right corner.",
+    "Tap <b>“Install app”</b> or <b>“Add to Home screen”</b>, then tap <b>Install</b>.",
+    "Gorilla Yapps shows up on your home screen and in your app drawer. Tap it to open it full screen."]],
+  ios:["🍎 iPhone / iPad",[
+    "Open this website in <b>Safari</b> (it has to be Safari on iPhone).",
+    "Tap the <b>Share</b> button <kbd>⬆️</kbd> at the bottom of the screen (on iPad it's at the top).",
+    "Scroll down and tap <b>“Add to Home Screen”</b> <kbd>➕</kbd>. You might have to tap <b>Edit Actions</b> to find it.",
+    "Tap <b>Add</b>. Gorilla Yapps is now on your home screen, and pop-up notifications work once you open it from there."]],
+  chromebook:["🧩 Chromebook",[
+    "Open this website in <b>Chrome</b>.",
+    "Click the install icon <kbd>⊕</kbd> on the right side of the address bar, or open the menu <kbd>⋮</kbd> → <b>“Install Gorilla Yapps”</b>.",
+    "Click <b>Install</b>. You'll find Gorilla Yapps in your launcher with your other apps."]]
+};
+async function qrSVG(text){
+  try{
+    const load=src=>new Promise((ok,no)=>{ const sc=document.createElement("script"); sc.src=src; sc.onload=ok; sc.onerror=no; document.head.appendChild(sc); });
+    if(!window.qrcode) await load("https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js").catch(()=>load("https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"));
+    const q=window.qrcode(0,"M"); q.addData(text); q.make();
+    return q.createSvgTag({cellSize:4, margin:0, scalable:true});
+  }catch(e){ return ""; }
+}
+function openGetApp(dev){
+  dev=dev||guessDevice();
+  const url=location.origin+"/", done=isStandalone(), [devName,steps]=GA_DEVICES[dev];
+  openModal(`<div class="card getapp" role="dialog" aria-modal="true" aria-labelledby="gaTitle">
+    <div class="row"><h2 id="gaTitle">📲 Get the app</h2><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+    <div class="ga-hero"><img src="/icon-192.png" alt=""><div><h3>Gorilla Yapps</h3><p>Free on computers, phones and tablets. No app store needed: it installs right from this website and updates by itself.</p></div></div>
+    ${done?`<div class="ga-done">✅ You're already using the app. Nice!</div>`:`
+    ${S.installEvt?`<button type="button" class="big-btn" id="gaInstall">⬇️ Install Gorilla Yapps</button>`:""}
+    <div class="ga-perks"><div><b>🚀</b>Opens in one tap, in its own window</div><div><b>🔔</b>Pop-up notifications for DMs and @mentions</div><div><b>🆓</b>Free forever, updates by itself</div></div>
+    <div class="ga-dev" role="tablist" aria-label="Pick your device">${Object.entries(GA_DEVICES).map(([k,[n]])=>`<button type="button" class="btn ${k===dev?"primary":""}" role="tab" aria-selected="${k===dev}" data-gadev="${k}">${n}</button>`).join("")}</div>
+    <h3 style="margin:0">${devName}${dev===guessDevice()?` <small class="note">(looks like what you're on)</small>`:""}</h3>
+    <ol class="ga-steps">${steps.map(t=>`<li><span>${t}</span></li>`).join("")}</ol>`}
+    <div class="ga-share"><div class="ga-qr" id="gaQr" aria-label="QR code for the website"><span class="note">…</span></div><div class="ga-link"><b>Get it on your phone or send it to a friend</b><span class="note" style="text-align:left;margin:0">Scan the code with your phone's camera, or copy the link.</span><code>${esc(url)}</code><button type="button" class="btn" id="gaCopy">📋 Copy link</button></div></div>
+  </div>`);
+  $("modal").querySelector(".getapp").onclick=e=>{ const b=e.target.closest("[data-gadev]"); if(b) openGetApp(b.dataset.gadev); };
+  $("gaCopy").onclick=async()=>{ try{ await navigator.clipboard.writeText(url); toast("Link copied! 📋"); }catch(e){ toast(url); } };
+  if($("gaInstall")) $("gaInstall").onclick=async()=>{ const ev=S.installEvt; if(!ev) return; S.installEvt=null; try{ ev.prompt(); const r=await ev.userChoice; if(r&&r.outcome==="accepted") toast("Installed! Find Gorilla Yapps on your home screen or desktop 🦍", true); }catch(e){} if($("gaTitle")) openGetApp(dev); };
+  qrSVG(url).then(svg=>{ const el=$("gaQr"); if(el) el.innerHTML=svg||`<span class="note">📱</span>`; });
+}
+document.addEventListener("click", e=>{ const b=e.target.closest && e.target.closest("[data-getapp]"); if(b){ e.preventDefault(); openGetApp(); } });
+function showAuthApp(){ const el=$("authApp"); if(el) el.innerHTML = ON_SITE() && !isStandalone() ? ` · <button type="button" class="link-btn" data-getapp>📲 Get the app</button>` : ""; }
+window.addEventListener("load", ()=>setTimeout(showAuthApp, 300));
 
 /* ================= badges ================= */
 function badgesOf(uid){
@@ -3515,7 +3645,7 @@ function openSoundManager(m){
   });
 }
 
-const FX_EMOJI={sparkles:"✨",leaves:"🍃",bubbles:"🫧",bananas:"🍌",hearts:"💖",confetti:"🎊",embers:"🔥",stars:"⭐"};
+const FX_EMOJI={sparkles:"✨",leaves:"🍃",bubbles:"🫧",bananas:"🍌",hearts:"💖",confetti:"🎊",embers:"🔥",stars:"⭐",snow:"❄️",crowns:"👑"};
 function fxHTML(p, override){ const e=override!==undefined?override:(p&&p.effect); if(!e||!FX_EMOJI[e]) return ""; return `<div class="fx fx-${e}" aria-hidden="true">${Array.from({length:12},(_,i)=>`<i style="--i:${i}">${FX_EMOJI[e]}</i>`).join("")}</div>`; }
 function renderPractice(){
   const b=$("practiceBar"); if(!b) return;
@@ -3713,7 +3843,7 @@ function renderTroop(){
     (friends.filter(u=>!placed.has(u)).length?`<div class="cat"><span class="sign">Friends — ${friends.filter(u=>on.has(u)).length}/${friends.length}</span></div>${friends.filter(u=>!placed.has(u)).map(u=>row(u,on.has(u))).join("")}`:"")+
     `<div class="cat"><span class="sign">Online — ${online.length}</span></div>${online.map(u=>row(u,true)).join("")}`+
     (offline.length?`<div class="cat"><span class="sign">Offline — ${offline.length}</span></div>${offline.map(u=>row(u,false)).join("")}`:"")+
-    (S.mode==="live" && all.length<=1 ? `<p class="note" style="text-align:left;padding:8px">Invite your friends: tap Share at the top of the page and add their emails so they can sign up and yap here too.</p>`:"");
+    (S.mode==="live" && all.length<=1 ? `<p class="note" style="text-align:left;padding:8px">${ON_SITE()?`Invite your friends: send them the link to this website so they can sign up and yap here too. <button type="button" class="link-btn" data-getapp>📲 Get the link</button>`:"Invite your friends: tap Share at the top of the page and add their emails so they can sign up and yap here too."}</p>`:"");
 }
 function renderMe(){
   const p=myProfile(); if(!p) return;
@@ -3731,6 +3861,7 @@ function renderMe(){
 
 /* ================= friends ================= */
 function loadFriends(){
+  watchGifts();
   if(S.mode==="live"){
     try{
       S.db.doc("data/users/"+S.uid+"/friends").onSnapshot(d=>{ const x=d.exists?d.data():{}; S.friends=new Set(Array.isArray(x.ids)?x.ids:[]); S.freqOut=new Set(Array.isArray(x.out)?x.out:[]); if(S.loggedIn) renderAll(); }, ()=>{});
@@ -3909,7 +4040,7 @@ function renderThread(){
     try{
       await api.send(threadKey(th.k,th.id), {uid:S.uid, ts, text:t.slice(0,600)});
       await api.update(th.k, th.id, {threadCount:Math.max(before+1, S.threadMsgs.length), threadLast:ts});
-      earnBanana();
+      earnBanana(); questTick("thread");
     }catch(err){ toast("Reply didn't send. Try again."); }
   };
   tp.querySelectorAll("[data-thdel]").forEach(bt=>bt.onclick=async()=>{
@@ -3918,6 +4049,179 @@ function renderThread(){
     try{ await api.remove(threadKey(th.k,th.id), bt.dataset.thdel); await api.update(th.k, th.id, {threadCount:Math.max(0,Math.min(before-1, S.threadMsgs.length))}); }catch(err){ toast("Couldn't delete."); }
   });
   tp.querySelectorAll("[data-profile]").forEach(el=>el.onclick=()=>openPopout(el.dataset.profile, el));
+}
+
+/* ================= daily quests ================= */
+const QUEST_POOL=[
+  {t:"msg",n:10,r:15,label:"Send 10 messages",icon:"💬"},
+  {t:"react",n:5,r:15,label:"React to 5 messages",icon:"😀"},
+  {t:"chans",n:3,r:15,label:"Visit 3 different channels or chats",icon:"🧭"},
+  {t:"vc",n:1,r:20,label:"Hop into a voice room",icon:"🔊"},
+  {t:"thread",n:1,r:20,label:"Reply in a thread",icon:"🧵"},
+  {t:"dm",n:1,r:15,label:"Send someone a DM",icon:"✉️"},
+  {t:"sticker",n:2,r:15,label:"Send 2 stickers",icon:"🦍"},
+  {t:"poll",n:1,r:25,label:"Start a poll",icon:"📊"},
+  {t:"equip",n:1,r:15,label:"Buy or wear something from the shop",icon:"🎩"}
+];
+const QUEST_BONUS=40;
+function todaysQuests(){
+  let h=0; for(const ch of dayStr()+"|"+(S.uid||"")) h=(h*31+ch.charCodeAt(0))>>>0;
+  const pool=QUEST_POOL.slice(), out=[];
+  while(out.length<3 && pool.length){ h=(Math.imul(h,1103515245)+12345)>>>0; out.push(pool.splice((h>>>16)%pool.length,1)[0]); }
+  return out;
+}
+function questState(me){
+  const q=me&&me.quests;
+  if(!q || q.day!==dayStr()) return {day:dayStr(), p:{}, got:[], seen:[], bonus:false};
+  return {day:q.day, p:Object.assign({},q.p||{}), got:Array.isArray(q.got)?q.got.slice():[], seen:Array.isArray(q.seen)?q.seen.slice():[], bonus:!!q.bonus};
+}
+function questTick(type, n, tag){
+  if(!S.loggedIn || S.mode==="preview") return;
+  const q=todaysQuests().find(x=>x.t===type); if(!q) return;
+  bananaChain=bananaChain.then(async()=>{
+    const me=myProfile(); if(!me) return;
+    const qs=todaysQuests(), st=questState(me);
+    if(st.got.includes(type)) return;
+    if(tag){ if(st.seen.includes(tag)) return; st.seen=st.seen.concat(tag).slice(-12); }
+    st.p[type]=Math.min(q.n,(st.p[type]||0)+(n||1));
+    let reward=0, msg="";
+    if(st.p[type]>=q.n){ st.got=st.got.concat(type); reward+=q.r; msg=`📜 Quest done: ${q.label}! +${q.r} 🍌`; }
+    if(!st.bonus && qs.every(x=>st.got.includes(x.t))){ st.bonus=true; reward+=QUEST_BONUS; msg=`🏆 All quests done! +${reward} 🍌`; }
+    const upd={quests:st}; const before=levelOf(xpOf(me));
+    if(reward){ upd.bananas=(me.bananas||0)+reward; upd.xp=xpOf(me)+reward; }
+    try{ await api.updateProfile(upd); Object.assign(me,upd); }catch(e){ return; }
+    if(reward){ toast(msg, true); playSfx("cheer", true); renderMe(); levelUpToast(before); }
+    if($("dlTitle")) openDaily();
+  });
+}
+function levelUpToast(before){
+  const me=myProfile(), after=levelOf(xpOf(me)); if(after<=before) return;
+  const ready=LEVEL_ROAD.some(([l])=>l>before && l<=after);
+  setTimeout(()=>toast(`⬆️ Level up! You're level ${after}`+(ready?" · 🎁 A Level road reward is ready!":""), true), 1200);
+}
+
+/* ================= level road ================= */
+const LEVEL_ROAD=[[2,{b:30}],[3,{b:50}],[5,{item:"sunrise"}],[7,{b:100}],[10,{item:"snow"}],[15,{item:"vinering"}],[20,{item:"royal"}],[25,{b:300}],[30,{item:"crowns"}],[40,{item:"legendring"}],[50,{b:1000}]];
+function lvReady(me){ me=me||myProfile(); if(!me) return []; const lv=levelOf(xpOf(me)), c=Array.isArray(me.lvClaimed)?me.lvClaimed:[]; return LEVEL_ROAD.filter(([l])=>l<=lv && !c.includes(l)); }
+function itemPreview(id, who){
+  const it=shopItem(id); if(!it) return "";
+  const p=who||myProfile()||{}, f=SHOP_FIELD[it.cat];
+  if(it.cat==="color") return `<div class="shop-prev name"><span class="nc nc-${id}">${esc(p.display||p.name||"Gorilla")}</span></div>`;
+  if(it.cat==="effect") return `<div class="shop-prev fxp">${fxHTML(null,id)}<span class="av">${av(Object.assign({},p,{avatar:null}))}</span></div>`;
+  return `<div class="shop-prev"><span class="av">${av(Object.assign({},p,{avatar:null},{[f]:id}), it.cat==="deco"?id:undefined)}</span></div>`;
+}
+function openLevelRoad(){
+  const me=myProfile(); if(!me) return;
+  const lv=levelOf(xpOf(me)), lo=bananasFor(lv), hi=bananasFor(lv+1), c=Array.isArray(me.lvClaimed)?me.lvClaimed:[];
+  const pct=Math.max(0,Math.min(100,Math.round((xpOf(me)-lo)/(hi-lo)*100)));
+  openModal(`<div class="card" role="dialog" aria-modal="true" aria-labelledby="lrTitle" style="width:min(560px,100%)">
+    <div class="row"><h2 id="lrTitle">🛣️ Level road</h2><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+    <div class="road-top"><span class="av lg">${av(me)}</span><div class="meter"><b>Level ${lv}</b><div class="qbar"><i style="width:${pct}%"></i></div><small class="note" style="text-align:left;display:block;margin-top:4px">${hi-xpOf(me)} more XP to level ${lv+1}. Chatting and quests give XP.</small></div></div>
+    <div class="road">${LEVEL_ROAD.map(([l,r])=>{
+      const got=c.includes(l), ready=!got && l<=lv, it=r.item?shopItem(r.item):null;
+      const what=it?`<b>${esc(it.name)}</b><small class="note" style="text-align:left;display:block">Exclusive ${SHOP_LABEL[it.cat].replace(/s$/,"").toLowerCase()} · can't be bought</small>`:`<b>${r.b} bananas</b><small class="note" style="text-align:left;display:block">Spend them in the shop</small>`;
+      return `<div class="road-step ${got?"got":ready?"ready":"locked"}"><div class="lvl"><small>LEVEL</small>${l}</div><div class="rp">${it?itemPreview(it.id):`<span class="bn">🍌</span>`}</div><div>${what}</div>${got?`<span class="rs-state">✓ Got it</span>`:ready?`<button type="button" class="btn primary" data-lvclaim="${l}">🎁 Claim</button>`:`<span class="rs-state note">🔒 Lv ${l}</span>`}</div>`; }).join("")}</div>
+  </div>`);
+  $("modal").querySelector(".road").onclick=e=>{ const b=e.target.closest("[data-lvclaim]"); if(b){ b.disabled=true; claimLevel(+b.dataset.lvclaim); } };
+  const first=$("modal").querySelector(".road-step.ready")||$("modal").querySelector(".road-step.locked");
+  if(first) first.scrollIntoView({block:"nearest"});
+}
+function claimLevel(l){
+  bananaChain=bananaChain.then(async()=>{
+    const me=myProfile(); if(!me) return;
+    const step=LEVEL_ROAD.find(x=>x[0]===l); if(!step || levelOf(xpOf(me))<l) return;
+    const c=Array.isArray(me.lvClaimed)?me.lvClaimed:[]; if(c.includes(l)) return;
+    const r=step[1], upd={lvClaimed:c.concat(l)};
+    if(r.b) upd.bananas=(me.bananas||0)+r.b;
+    if(r.item && !owns(me,r.item)){ upd.owned=(me.owned||[]).concat(r.item); upd[SHOP_FIELD[shopItem(r.item).cat]]=r.item; }
+    try{ await api.updateProfile(upd); Object.assign(me,upd); }catch(e){ toast("Couldn't claim that. Try again."); return; }
+    toast(r.b?`+${r.b} 🍌 from the Level road!`:`🌟 You unlocked ${shopItem(r.item).name}! You're wearing it now.`, true); playSfx("cheer", true);
+    renderAll(); if($("lrTitle")) openLevelRoad();
+  });
+}
+
+/* ================= gifts ================= */
+S.gifts=[];
+function watchGifts(){
+  if(!S.uid || S.giftUid===S.uid) return;
+  if(typeof S.giftUnsub==="function") try{ S.giftUnsub(); }catch(e){}
+  S.giftUid=S.uid; S.gifts=[]; S.giftPrimed=false;
+  S.giftUnsub=store.watchDoc("gifts/"+S.uid, d=>{
+    const items=(d && Array.isArray(d.items)) ? d.items.filter(x=>x && x.item && shopItem(x.item) && !(S.blocks&&S.blocks.has(x.from))) : [];
+    const fresh=items.filter(x=>!S.gifts.some(y=>y.id===x.id));
+    S.gifts=items;
+    if(S.giftPrimed && fresh.length){ toast(`🎁 ${dn(fresh[0].from)} sent you a gift!`, true); if(!local.dmMute) ook(); }
+    S.giftPrimed=true;
+    if(S.loggedIn){ renderRailExtras(); if($("gfTitle")) openGiftBox(); }
+  });
+}
+function giftable(friend){
+  const out=[]; Object.entries(SHOP).forEach(([cat,l])=>l.forEach(it=>{ if(it[3]!=="x" && !owns(friend,it[0])) out.push(it[0]); }));
+  return out;
+}
+function openGift(uid){
+  const fp=prof(uid), me=myProfile(); if(!me) return;
+  if(!S.friends.has(uid)){ toast("You can only send gifts to friends."); return; }
+  let cat="hat", pick=null;
+  const draw=()=>{
+    const ids=giftable(fp).filter(id=>shopItem(id).cat===cat), it=pick?shopItem(pick):null;
+    openModal(`<div class="card" role="dialog" aria-modal="true" aria-labelledby="gTitle" style="width:min(620px,100%)">
+      <div class="row"><h2 id="gTitle">🎁 Gift for ${esc(fp.display||fp.name)}</h2><span class="wallet">${me.bananas||0} 🍌</span><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+      <p class="note" style="margin:0;text-align:left">Pick something ${esc(fp.display||fp.name)} doesn't have yet. You pay with your bananas.</p>
+      <div class="shop-tabs2" role="tablist">${Object.keys(SHOP).map(k=>`<button type="button" role="tab" data-gcat="${k}" aria-pressed="${k===cat}">${SHOP_ICON[k]} ${SHOP_LABEL[k]}</button>`).join("")}</div>
+      <div class="gift-grid">${ids.map(id=>{ const x=shopItem(id), [rn,rc]=RARITY[x.rarity]; return `<button type="button" class="gift-it" data-gpick="${id}" aria-pressed="${pick===id}">${itemPreview(id, fp)}<b>${esc(x.name)}</b><span class="rar2" style="color:${rc}">${rn}</span><span>${x.price} 🍌</span></button>`; }).join("")||`<p class="note">They already have everything here! 🤯</p>`}</div>
+      <div class="field"><label for="gNote">Note (optional)</label><input id="gNote" maxlength="60" placeholder="Happy birthday! 🎉" autocomplete="off"></div>
+      <div class="err" id="gErr"></div>
+      <button class="big-btn" id="gSend" ${it?"":"disabled"}>${it?`Send ${esc(it.name)} for ${it.price} 🍌`:"Pick a gift"}</button>
+    </div>`);
+    const card=$("modal").querySelector(".card");
+    card.onclick=e=>{
+      const c=e.target.closest("[data-gcat]"); if(c){ const keep=$("gNote").value; cat=c.dataset.gcat; draw(); $("gNote").value=keep; return; }
+      const g=e.target.closest("[data-gpick]"); if(g){ const keep=$("gNote").value; pick=g.dataset.gpick; draw(); $("gNote").value=keep; return; }
+    };
+    $("gSend").onclick=()=>{ const note=$("gNote").value.trim(); if(hasBad(note)){ $("gErr").textContent="Your note has a word we don't allow."; return; } $("gSend").disabled=true; sendGift(uid, pick, note); };
+  };
+  draw();
+}
+function sendGift(to, id, note){
+  bananaChain=bananaChain.then(async()=>{
+    const me=myProfile(), it=shopItem(id); if(!me || !it || it.rarity==="x") return;
+    if((me.bananas||0)<it.price){ if($("gErr")){ $("gErr").textContent="You need "+(it.price-(me.bananas||0))+" more bananas."; $("gSend").disabled=false; } return; }
+    const g={id:Math.random().toString(36).slice(2,10)+Date.now().toString(36), from:S.uid, item:id, note:censor(note||"").slice(0,60), ts:Date.now()};
+    const path="gifts/"+to;
+    try{
+      const d=(await store.get(path).catch(()=>null))||{};
+      await store.set(path,{items:(Array.isArray(d.items)?d.items:[]).slice(-29).concat(g)});
+    }catch(e){ if($("gErr")){ $("gErr").textContent=(e&&e.message&&/friend|full/i.test(e.message))?e.message:"Couldn't send the gift. Try again."; $("gSend").disabled=false; } return; }
+    const upd={bananas:(me.bananas||0)-it.price};
+    try{ await api.updateProfile(upd); Object.assign(me,upd); }catch(e){}
+    closeModal(); renderMe(); toast(`🎁 Sent ${it.name} to ${dn(to)}!`, true); playSfx("cheer", true);
+    questTick("gift");
+  });
+}
+function openGiftBox(){
+  const me=myProfile(); if(!me) return;
+  openModal(`<div class="card" role="dialog" aria-modal="true" aria-labelledby="gfTitle" style="width:min(520px,100%)">
+    <div class="row"><h2 id="gfTitle">🎁 Your gifts</h2><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+    ${S.gifts.length?S.gifts.map(g=>{ const it=shopItem(g.item), dup=owns(me,g.item); return `<div class="gift-card">${itemPreview(g.item)}<div class="gc-body"><b>${esc(it.name)}</b> from <b>${esc(dn(g.from))}</b>${g.note?`<i>“${esc(censor(g.note))}”</i>`:""}${dup?`<i>You already have this, so you'll get ${it.full} 🍌 instead.</i>`:""}</div><div style="display:flex;flex-direction:column;gap:6px"><button type="button" class="btn primary" data-gopen="${esc(g.id)}">Open</button><button type="button" class="btn" data-gthanks="${esc(g.from)}">💬 Thanks</button></div></div>`; }).join(""):`<p class="note">No gifts right now. Friends can send you one from your profile.</p>`}
+  </div>`);
+  $("modal").querySelector(".card").onclick=e=>{
+    const o=e.target.closest("[data-gopen]"); if(o){ o.disabled=true; openGiftItem(o.dataset.gopen); return; }
+    const t=e.target.closest("[data-gthanks]"); if(t){ closeModal(); openDM(t.dataset.gthanks); }
+  };
+}
+function openGiftItem(gid){
+  bananaChain=bananaChain.then(async()=>{
+    const me=myProfile(), g=S.gifts.find(x=>x.id===gid); if(!me || !g) return;
+    const it=shopItem(g.item), dup=owns(me,g.item);
+    const rest=S.gifts.filter(x=>x.id!==gid);
+    try{ await store.set("gifts/"+S.uid,{items:rest}); }catch(e){ toast("Couldn't open it. Try again."); return; }
+    S.gifts=rest;
+    const upd=dup?{bananas:(me.bananas||0)+it.full}:{owned:(me.owned||[]).concat(it.id)};
+    try{ await api.updateProfile(upd); Object.assign(me,upd); }catch(e){}
+    toast(dup?`+${it.full} 🍌 (you already had ${it.name})`:`🎉 You got ${it.name}! Find it in the shop to wear it.`, true); playSfx("cheer", true);
+    renderAll(); if($("gfTitle")) openGiftBox();
+  });
 }
 
 /* ================= daily reward ================= */
@@ -3929,14 +4233,20 @@ function dailyState(){
   return {claimed, streak, reward: 5+Math.min(streak-1,5)*2};
 }
 function openDaily(){
-  const st=dailyState();
-  openModal(`<div class="card daily" role="dialog" aria-modal="true" aria-labelledby="dlTitle" style="width:min(460px,100%)">
-    <div class="row"><h2 id="dlTitle">🎁 Daily bananas</h2><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+  const st=dailyState(), me=myProfile()||{}, qs=todaysQuests(), qst=questState(me), ready=lvReady(me).length, gifts=S.gifts.length;
+  const ends=new Date(); ends.setHours(24,0,0,0); const hrs=Math.max(1,Math.round((ends-Date.now())/3600000));
+  openModal(`<div class="card daily daily2" role="dialog" aria-modal="true" aria-labelledby="dlTitle" style="width:min(520px,100%)">
+    <div class="row"><h2 id="dlTitle">🎁 Daily rewards</h2><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+    <div class="dl-sec"><h3>🍌 Daily bananas <small>${st.streak} ${st.streak===1?"day":"days"} streak 🔥</small></h3>
     <div class="streak">${Array.from({length:7},(_,i)=>{ const n=i+1, got=st.claimed?n<=Math.min(st.streak,7):n<Math.min(st.streak,7); return `<div class="sday ${got?"got":""} ${!st.claimed&&n===Math.min(st.streak,7)?"next":""}"><b>Day ${n}</b><span>${5+Math.min(n-1,5)*2}🍌</span></div>`; }).join("")}</div>
-    <p class="note" style="margin:0">${st.claimed?`You grabbed today's bananas. Streak: <b>${st.streak} ${st.streak===1?"day":"days"}</b> 🔥 Come back tomorrow!`:`Day ${st.streak} of your streak. Come back every day for bigger rewards, up to 15🍌. Miss a day and the streak starts over.`}</p>
-    ${st.claimed?"":`<button class="big-btn" id="claimBtn">Grab ${st.reward} 🍌</button>`}
+    ${st.claimed?`<p class="note" style="margin:0">You grabbed today's bananas. Come back tomorrow!</p>`:`<button class="big-btn" id="claimBtn">Grab ${st.reward} 🍌</button>`}</div>
+    <div class="dl-sec"><h3>📜 Today's quests <small>new quests in ${hrs}h</small></h3>
+    ${qs.map(q=>{ const p=Math.min(q.n,qst.p[q.t]||0), done=qst.got.includes(q.t); return `<div class="quest ${done?"done":""}"><span class="qi">${q.icon}</span><div><b>${esc(q.label)}</b><div class="qbar"><i style="width:${Math.round(p/q.n*100)}%"></i></div></div><span class="qr">${done?"✓ Done":`${p}/${q.n} · +${q.r}🍌`}</span></div>`; }).join("")}
+    <div class="qbonus ${qst.bonus?"got":""}">${qst.bonus?"🏆 You finished every quest today! Bonus collected.":`🏆 Finish all 3 for a <b>+${QUEST_BONUS} 🍌</b> bonus`}</div></div>
+    <div class="dl-row"><button type="button" class="btn" id="dlRoad">🛣️ Level road${ready?`<span class="ping">${ready}</span>`:""}</button><button type="button" class="btn" id="dlGifts">🎁 Gifts${gifts?`<span class="ping">${gifts}</span>`:""}</button></div>
   </div>`);
   if($("claimBtn")) $("claimBtn").onclick=claimDaily;
+  $("dlRoad").onclick=openLevelRoad; $("dlGifts").onclick=openGiftBox;
 }
 async function claimDaily(){
   const st=dailyState(); if(st.claimed) return;
@@ -3944,7 +4254,7 @@ async function claimDaily(){
   const upd={daily:{day:dayStr(), streak:st.streak}, bananas:(me.bananas||0)+st.reward, xp:xpOf(me)+st.reward};
   try{ await api.updateProfile(upd); Object.assign(me,upd); }catch(e){ toast("Couldn't grab your bananas. Try again."); return; }
   closeModal(); renderMe(); renderTroop();
-  toast(`+${st.reward} 🍌 · ${st.streak}-day streak!`+(levelOf(me.xp)>before?` Level up! You're level ${levelOf(me.xp)}`:""), true);
+  toast(`+${st.reward} 🍌 · ${st.streak}-day streak!`, true); levelUpToast(before);
 }
 
 /* ================= banana shop ================= */
@@ -3979,7 +4289,7 @@ function openShop(tab){
         <div class="shop-grid">${items.map(([id,name,full,rar,cat])=>{ const own=owns(me,id), field=SHOP_FIELD[cat], eq=me[field]===id, price=dealPrice(id,full), deal=price<full, afford=(me.bananas||0)>=price, trying=S.tryOn[field]===id, [rn,rc]=RARITY[rar];
           return `<div class="shop-item r-${rar} ${own?"owned":""} ${trying?"trying":""}" style="--rc:${rc}" data-try="${cat}|${id}" role="button" tabindex="0" aria-label="Try on ${esc(name)}">
             <span class="rar">${rn}</span>${deal?`<span class="deal-tag">-25%</span>`:""}${preview(cat,id)}<b>${esc(name)}</b>
-            ${own?(eq?`<button type="button" class="btn" data-unequip="${cat}|${id}">✓ Using · take off</button>`:`<button type="button" class="btn primary" data-equip="${cat}|${id}">Use it</button>`)
+            ${rar==="x"&&!own?(levelOf(xpOf(me))>=xLevel(id)?`<button type="button" class="btn primary" data-lvroad>🎁 Claim on Level road</button>`:`<button type="button" class="btn" disabled>🔒 Reach level ${xLevel(id)}</button>`):own?(eq?`<button type="button" class="btn" data-unequip="${cat}|${id}">✓ Using · take off</button>`:`<button type="button" class="btn primary" data-equip="${cat}|${id}">Use it</button>`)
               :`<button type="button" class="btn ${afford?"primary":""}" data-buy="${id}" ${afford?"":"disabled"} title="${afford?"Buy for "+price+" bananas":"You need "+(price-(me.bananas||0))+" more bananas"}">${deal?`<s>${full}</s> `:""}${price} 🍌</button>`}</div>`; }).join("")||`<p class="note">Nothing here yet.</p>`}</div>
       </div>
     </div>
@@ -3992,6 +4302,7 @@ function openShop(tab){
   card.onclick=async e=>{
     const t=e.target;
     const tb=t.closest("[data-shoptab]"); if(tb){ openShop(tb.dataset.shoptab); return; }
+    if(t.closest("[data-lvroad]")){ openLevelRoad(); return; }
     const bb=t.closest("[data-buy]");
     if(bb){
       const it=shopItem(bb.dataset.buy), me2=myProfile();
@@ -4000,14 +4311,14 @@ function openShop(tab){
       if(bb.dataset.armed!=="1"){ bb.dataset.armed="1"; bb.textContent="Tap to buy"; return; }
       const f=SHOP_FIELD[it.cat];
       const upd={bananas:(me2.bananas||0)-it.price, owned:(me2.owned||[]).concat(it.id), [f]:it.id};
-      try{ await api.updateProfile(upd); Object.assign(me2,upd); delete S.tryOn[f]; toast((it.rarity==="l"?"🌟 LEGENDARY! ":"")+"Bought "+it.name+"! 🎉", it.rarity==="l"); if(it.rarity==="l"||it.rarity==="e") playSfx("cheer",true); renderAll(); openShop(); }catch(err){ toast("Couldn't buy that. Try again."); }
+      try{ await api.updateProfile(upd); Object.assign(me2,upd); delete S.tryOn[f]; toast((it.rarity==="l"?"🌟 LEGENDARY! ":"")+"Bought "+it.name+"! 🎉", it.rarity==="l"); if(it.rarity==="l"||it.rarity==="e") playSfx("cheer",true); questTick("equip"); renderAll(); openShop(); }catch(err){ toast("Couldn't buy that. Try again."); }
       return;
     }
     const eb=t.closest("[data-equip]"), ub=t.closest("[data-unequip]");
     if(eb||ub){
       const [cat,id]=(eb||ub).dataset[eb?"equip":"unequip"].split("|"), f=SHOP_FIELD[cat];
       const v=eb?id:(cat==="hat"?"none":cat==="face"?"normal":"");
-      try{ await api.updateProfile({[f]:v}); myProfile()[f]=v; delete S.tryOn[f]; renderAll(); openShop(); }catch(err){ toast("Couldn't change that."); }
+      try{ await api.updateProfile({[f]:v}); myProfile()[f]=v; delete S.tryOn[f]; if(eb) questTick("equip"); renderAll(); openShop(); }catch(err){ toast("Couldn't change that."); }
       return;
     }
     const tr=t.closest("[data-try]");
@@ -4036,8 +4347,8 @@ function openOutfits(){
 }
 function renderRailExtras(){
   const host=$("railExtras"); if(!host || !myProfile()) return;
-  const st=dailyState();
-  host.innerHTML=`<button class="map tool" id="dailyBtn" title="Daily bananas" aria-label="Daily bananas${st.claimed?"":", ready to grab"}">🎁${st.claimed?"":`<span class="ping">!</span>`}</button><button class="map tool" id="shopBtn" title="Banana Shop" aria-label="Banana Shop">🛒</button>`;
+  const st=dailyState(), extra=lvReady().length+S.gifts.length, hot=!st.claimed||extra>0;
+  host.innerHTML=`<button class="map tool" id="dailyBtn" title="Daily rewards, quests and gifts" aria-label="Daily rewards${hot?", something to grab":""}">🎁${hot?`<span class="ping">${extra&&st.claimed?extra:"!"}</span>`:""}</button><button class="map tool" id="shopBtn" title="Banana Shop" aria-label="Banana Shop">🛒</button>${ON_SITE()&&!isStandalone()?`<button class="map tool" id="appBtn" title="Get the app" aria-label="Get the app" data-getapp>📲</button>`:""}`;
   $("dailyBtn").onclick=openDaily; $("shopBtn").onclick=()=>openShop();
 }
 
@@ -4813,7 +5124,7 @@ function openUserSettings(tab){
       <div class="set-row"><span><b>Theme</b><small>Pastel day sky or dark night jungle</small></span><div class="seg"><button type="button" data-skypick="day" aria-pressed="${local.sky!=="night"}">☀️ Day</button><button type="button" data-skypick="night" aria-pressed="${local.sky==="night"}">🌙 Night</button></div></div>
       ${toggle("setCompact",local.compact,"Compact messages","Fit more messages on screen")}
       <label class="set-slider"><b>Text size</b><input type="range" id="setFont" min="13" max="19" step="1" value="${+local.font||15}"><small id="setFontVal">${+local.font||15}px</small></label></div>
-      ${ON_SITE()?`<h3 class="set-h">📲 App</h3><div class="set-group"><div class="set-row"><span><b>Install Gorilla Yapps</b><small>${installText()}</small></span>${S.installEvt?`<button type="button" class="btn primary" id="setInstall">Install</button>`:""}</div></div>`:""}`; break;
+      ${ON_SITE()?`<h3 class="set-h">📲 App</h3><div class="set-group"><div class="set-row"><span><b>Install Gorilla Yapps</b><small>${installText()}</small></span>${S.installEvt?`<button type="button" class="btn primary" id="setInstall">Install</button>`:""}${isStandalone()?"":`<button type="button" class="btn" data-getapp>📲 How to</button>`}</div></div>`:""}`; break;
     case "notifications": body=`<h2>Notifications</h2><div class="set-group">
       ${toggle("setMute",!local.mute,"Mention sounds","Play an ook when someone @mentions you")}
       ${toggle("setFlash",!local.noFlash,"TAGGED! flash","Show the lava flash when you get mentioned")}
@@ -4908,13 +5219,14 @@ function openProfile(uid){
       ${activityOf(p)?`<div class="po-activity">${activityText(p)}</div>`:""}
       <div class="pc-stats"><div><b>${lv}</b><small>Level</small></div><div><b>${p.bananas||0}</b><small>Bananas</small></div><div><b>${p.joined?new Date(p.joined).toLocaleDateString([],{month:"short",year:"numeric"}):"—"}</b><small>Joined</small></div></div>
       ${p.bio?`<div class="pc-bio">${esc(censor(p.bio))}</div>`:""}
-      <div class="row">${uid===S.uid?`<button class="btn primary" id="pcEdit">Edit profile</button>`:`<button class="btn primary" id="pcDM">💬 Message</button><button class="btn" id="pcMention">Mention</button><button class="btn" id="pcFriend">${friendState(uid)==="friend"?"★ Remove friend":friendBtnLabel(uid)}</button><button class="danger-btn" id="pcBlock">${S.blocks.has(uid)?"Unblock":"🚫 Block"}</button>${(p.avatar||p.banner)?`<button class="btn" id="pcReportPic">🚩 Report picture</button>`:""}${S.isOwner&&(p.avatar||p.banner)?`<button class="danger-btn" id="pcRmPic">Remove picture</button>`:""}${S.isOwner?`<button class="danger-btn" id="pcBan">${S.siteBans.has(uid)?"Unban from Gorilla Yapps":"⛔ Ban from Gorilla Yapps"}</button>`:""}`}</div>
+      <div class="row">${uid===S.uid?`<button class="btn primary" id="pcEdit">Edit profile</button>`:`<button class="btn primary" id="pcDM">💬 Message</button><button class="btn" id="pcMention">Mention</button><button class="btn" id="pcFriend">${friendState(uid)==="friend"?"★ Remove friend":friendBtnLabel(uid)}</button>${friendState(uid)==="friend"?`<button class="btn" id="pcGift">🎁 Send a gift</button>`:""}<button class="danger-btn" id="pcBlock">${S.blocks.has(uid)?"Unblock":"🚫 Block"}</button>${(p.avatar||p.banner)?`<button class="btn" id="pcReportPic">🚩 Report picture</button>`:""}${S.isOwner&&(p.avatar||p.banner)?`<button class="danger-btn" id="pcRmPic">Remove picture</button>`:""}${S.isOwner?`<button class="danger-btn" id="pcBan">${S.siteBans.has(uid)?"Unban from Gorilla Yapps":"⛔ Ban from Gorilla Yapps"}</button>`:""}`}</div>
     </div></div>`);
   if($("pcEdit")) $("pcEdit").onclick=openSettings;
   if($("pcDM")) $("pcDM").onclick=()=>{ closeModal(); openDM(uid); };
   if($("pcFriend")) $("pcFriend").onclick=async()=>{ await toggleFriend(uid); openProfile(uid); };
   if($("pcBlock")) $("pcBlock").onclick=()=>{ toggleBlock(uid); openProfile(uid); };
   if($("pcReportPic")) $("pcReportPic").onclick=()=>openReport({id:"profile", uid, k:"profile", text:"[profile picture or banner]"});
+  if($("pcGift")) $("pcGift").onclick=()=>openGift(uid);
   if($("pcRmPic")) $("pcRmPic").onclick=async()=>{ const b=$("pcRmPic"); if(b.dataset.armed!=="1"){ b.dataset.armed="1"; b.textContent="Tap again to remove"; return; } if(await removePics(uid)){ toast("Removed "+p.name+"'s picture and banner"); openProfile(uid); } };
   if($("pcBan")) $("pcBan").onclick=async()=>{
     const b=$("pcBan");

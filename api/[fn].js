@@ -301,6 +301,7 @@ async function readable(ctx, path, data) {
     }
     case "dmidx": return seg[1] === ctx.uid ? data : null;
     case "freq": return seg[1] === ctx.uid ? data : null;
+    case "gifts": return seg[1] === ctx.uid ? data : null;
     case "reports": return (seg[1] === ctx.uid || await ctx.isOwner()) ? data : null;
     case "data": return seg[2] === ctx.uid ? data : null;
     default: return null;
@@ -403,6 +404,8 @@ async function checkWrite(ctx, op, path, before, incoming) {
       if (after) {
         const idOk = v => typeof v === "string" && /^[a-z0-9-]{0,24}$/.test(v);
         for (const k of ["acc", "effect", "hat", "face", "pattern", "nameColor", "deco"]) if (after[k] != null && !idOk(after[k])) after[k] = "";
+        if (after.lvClaimed != null) after.lvClaimed = (Array.isArray(after.lvClaimed) ? after.lvClaimed : []).filter(n => Number.isInteger(n) && n > 0 && n <= 100).slice(0, 30);
+        if (after.quests != null) { const q = after.quests; after.quests = q && typeof q === "object" && JSON.stringify(q).length < 1500 ? q : null; }
         if (after.outfits != null) {
           const F = ["hat", "face", "acc", "pattern", "nameColor", "deco", "effect", "fur"];
           after.outfits = (Array.isArray(after.outfits) ? after.outfits : []).slice(0, 3).map(o => {
@@ -580,6 +583,24 @@ async function checkWrite(ctx, op, path, before, incoming) {
         .map(x => Object.assign(clean(x), { from: uid, ts: Date.now() }));
       if (!fresh.length) return { skip: true };
       return { after: { items: fresh.concat(prev).slice(0, 50) }, extra };
+    }
+    case "gifts": { // gift boxes: gifts/<to> = {items: [{id, from, item, note, ts}]}
+      if (seg.length !== 2) deny();
+      const giftId = v => typeof v === "string" && /^[a-z0-9-]{1,24}$/.test(v);
+      const clean = x => ({ id: str(x.id, 40), from: str(x.from, 80), item: giftId(x.item) ? x.item : "", note: censor(str(x.note, 60)), ts: +x.ts || Date.now() });
+      if (seg[1] === uid) { if (after) after = { items: (Array.isArray(after.items) ? after.items : []).slice(-30).map(clean).filter(x => x.item) }; break; }
+      if (op === "delete") deny();
+      const blocks = await ctx.doc("data/users/" + seg[1] + "/blocks");
+      if (blocks && (blocks.ids || []).includes(uid)) return { skip: true };
+      const fr = await ctx.doc("data/users/" + seg[1] + "/friends");
+      if (!fr || !(fr.ids || []).includes(uid)) deny("You can only send gifts to friends.");
+      const prev = before && Array.isArray(before.items) ? before.items : [];
+      const have = new Set(prev.map(x => x.id));
+      const fresh = (incoming && Array.isArray(incoming.items) ? incoming.items : []).filter(x => x && x.from === uid && !have.has(x.id) && giftId(x.item)).slice(0, 1)
+        .map(x => Object.assign(clean(x), { from: uid, ts: Date.now() }));
+      if (!fresh.length) return { skip: true };
+      if (prev.length >= 30) deny("Their gift box is full right now.");
+      return { after: { items: prev.concat(fresh) }, extra };
     }
     case "freq": { // friend request boxes: freq/<to> = {items: {<from>: time | "ok" | "rm"}}
       if (seg.length !== 2 || op === "delete" && seg[1] !== uid) deny();
