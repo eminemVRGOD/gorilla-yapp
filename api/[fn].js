@@ -236,7 +236,7 @@ async function chanInfo(ctx, key) {
   if (mapId.startsWith("s-")) {
     const srv = await ctx.server(mapId.slice(2)); if (!srv) return null;
     const c = (srv.chans || []).find(x => x.id === chan);
-    return { mapId, chan, server: srv, ann: !!(c && c.ann), rules: false, exists: !!c };
+    return { mapId, chan, server: srv, ann: !!(c && c.ann), rules: false, exists: !!c, see: (c && c.see) || "" };
   }
   if (!BUILTIN_MAPS.includes(mapId)) return null;
   const cfg = await ctx.doc("mapcfg/" + mapId);
@@ -250,7 +250,13 @@ async function serverVisible(ctx, s) {
 }
 async function canReadChannel(ctx, key) {
   const ci = await chanInfo(ctx, key); if (!ci) return false;
-  if (ci.server) return serverVisible(ctx, ci.server);
+  if (ci.server) {
+    if (!(await serverVisible(ctx, ci.server))) return false;
+    if (!ci.see) return true;
+    if (ci.server.owner === ctx.uid || await ctx.isOwner() || await ctx.can("manageMessages")) return true;
+    if (ci.see.startsWith("tag:")) { const p = await ctx.doc("profiles/" + ctx.uid); const tags = p && p.srvTags && p.srvTags[ci.mapId.slice(2)]; return Array.isArray(tags) && tags.includes(ci.see.slice(4)); }
+    return false;
+  }
   if (ci.cfg && (ci.cfg.bans || []).includes(ctx.uid) && !(await ctx.isOwner())) return false;
   return true;
 }
@@ -269,6 +275,14 @@ async function readable(ctx, path, data) {
   const seg = path.split("/"), top = seg[0];
   switch (top) {
     case "meta": case "mapcfg": case "mod": case "profiles": case "emoji": case "images": return data;
+    case "sounds": return data;
+    case "inbox": return seg[1] === ctx.uid ? data : null;
+    case "events": {
+      if (!data) return data;
+      const mid = String(data.mapId || "");
+      if (mid.startsWith("s-")) return (await serverVisible(ctx, await ctx.server(mid.slice(2)))) ? data : null;
+      return BUILTIN_MAPS.includes(mid) ? data : null;
+    }
     case "servers": {
       if (!data) return data;
       if (!(await serverVisible(ctx, data))) return null;
@@ -295,7 +309,7 @@ async function readable(ctx, path, data) {
 // Can the user list this collection at all? (Individual docs are still filtered by readable.)
 async function canListCollection(ctx, colPath) {
   const seg = colPath.split("/");
-  if (seg.length === 1) return ["meta", "mapcfg", "mod", "profiles", "emoji", "servers", "gdmmeta", "last", "reports", "dmidx"].includes(seg[0]);
+  if (seg.length === 1) return ["meta", "mapcfg", "mod", "profiles", "emoji", "servers", "gdmmeta", "last", "reports", "dmidx", "events", "sounds"].includes(seg[0]);
   if (seg.length === 3 && seg[2] === "m") {
     if (seg[0] === "ch") return canReadChannel(ctx, seg[1]);
     if (seg[0] === "dm") return inPair(ctx, seg[1]);
@@ -381,6 +395,24 @@ async function checkWrite(ctx, op, path, before, incoming) {
         if (typeof m !== "object" || !/^[0-9a-f]{32}$/.test(m.id || "") || (m.still && !/^[0-9a-f]{32}$/.test(m.still))) deny("That picture isn't valid.");
         after[k] = { id: m.id, still: m.still || m.id, gif: !!m.gif, anim: !!m.anim, ts: +m.ts || Date.now() };
       }
+      if (after && after.activity != null) {
+        const a = after.activity;
+        if (!a || typeof a !== "object" || !["playing", "listening", "watching", "building", "chilling"].includes(a.type) || !str(a.text, 40).trim()) after.activity = null;
+        else { if (hasBad(a.text)) deny("Your activity has a word we don't allow."); after.activity = { type: a.type, text: str(a.text, 40).trim(), until: +a.until || 0 }; }
+      }
+      if (after) {
+        const idOk = v => typeof v === "string" && /^[a-z0-9-]{0,24}$/.test(v);
+        for (const k of ["acc", "effect", "hat", "face", "pattern", "nameColor", "deco"]) if (after[k] != null && !idOk(after[k])) after[k] = "";
+        if (after.outfits != null) {
+          const F = ["hat", "face", "acc", "pattern", "nameColor", "deco", "effect", "fur"];
+          after.outfits = (Array.isArray(after.outfits) ? after.outfits : []).slice(0, 3).map(o => {
+            const r = { name: str(o && o.name, 20) };
+            if (hasBad(r.name)) r.name = "Outfit";
+            for (const f of F) if (o && o[f] != null) r[f] = f === "fur" ? str(o[f], 40) : (idOk(o[f]) ? o[f] : "");
+            return r;
+          });
+        }
+      }
       if (after && after.srvTags != null) {
         const o = {};
         if (after.srvTags && typeof after.srvTags === "object") Object.entries(after.srvTags).slice(0, 40).forEach(([k, v]) => { if (/^[A-Za-z0-9_-]{1,80}$/.test(k) && Array.isArray(v)) o[k] = v.map(t => str(t, 20)).filter(Boolean).slice(0, 8); });
@@ -416,7 +448,8 @@ async function checkWrite(ctx, op, path, before, incoming) {
         const w = after.welcome;
         after.welcome = w && typeof w === "object" ? { on: !!w.on, msg: censor(str(w.msg, 300)), rules: censor(str(w.rules, 600)), tags: (Array.isArray(w.tags) ? w.tags : []).map(t => str(t, 20).trim()).filter(t => t && !hasBad(t)).slice(0, 8) } : null;
         after.name = str(after.name, 32); after.desc = censor(str(after.desc, 120));
-        after.chans = (Array.isArray(after.chans) ? after.chans : []).slice(0, 20).map(c => ({ id: str(c.id, 24).toLowerCase().replace(/[^a-z0-9-]/g, "-"), topic: censor(str(c.topic, 120)), ann: !!c.ann })).filter(c => c.id.length >= 2);
+        after.chans = (Array.isArray(after.chans) ? after.chans : []).slice(0, 20).map(c => ({ id: str(c.id, 24).toLowerCase().replace(/[^a-z0-9-]/g, "-"), topic: censor(str(c.topic, 120)), ann: !!c.ann, cat: censor(str(c.cat, 24)), see: /^(mods|tag:.{1,20})$/.test(c.see || "") ? c.see : "" })).filter(c => c.id.length >= 2);
+        for (const k of ["iconImg", "bannerImg"]) { const m = after[k]; after[k] = m && typeof m === "object" && /^[0-9a-f]{32}$/.test(m.id || "") ? { id: m.id, still: /^[0-9a-f]{32}$/.test(m.still || "") ? m.still : m.id, gif: !!m.gif, anim: !!m.anim } : null; }
         if (!after.chans.length) deny("A server needs at least one channel.");
       }
       break;
@@ -498,6 +531,56 @@ async function checkWrite(ctx, op, path, before, incoming) {
       break;
     }
     case "last": return { skip: true }; // the server keeps these itself
+    case "events": {
+      if (seg.length !== 2) deny();
+      const mid = String((after || before || {}).mapId || "");
+      let manager = owner || await ctx.can("manageMessages");
+      if (mid.startsWith("s-")) { const srv = await ctx.server(mid.slice(2)); if (!srv || !(await serverVisible(ctx, srv))) deny(); if (srv.owner === uid) manager = true; }
+      else if (!BUILTIN_MAPS.includes(mid)) deny();
+      if (!before) {
+        if (!manager) deny("Only the server owner and mods can make events.");
+        if (!after || after.by !== uid) deny();
+      } else if (op === "delete") {
+        if (!manager && before.by !== uid) deny();
+        break;
+      } else if (!manager && before.by !== uid) {
+        const ck = changedKeys(before, after);
+        if (ck.some(k => k !== "going")) deny("You can only say if you're going.");
+        const gb = before.going || {}, ga = after.going || {};
+        for (const k of new Set([...Object.keys(gb), ...Object.keys(ga)])) if (k !== uid && JSON.stringify(gb[k]) !== JSON.stringify(ga[k])) deny();
+      }
+      if (after) {
+        const going = {}; Object.entries(after.going || {}).slice(0, 500).forEach(([k, v]) => { if (v === true && /^[A-Za-z0-9_-]{1,80}$/.test(k)) going[k] = true; });
+        if (!str(after.title, 60).trim() || hasBad(after.title) || hasBad(after.desc)) deny("Pick an event name without bad words.");
+        after = { mapId: mid, title: str(after.title, 60).trim(), desc: str(after.desc, 300), when: +after.when || Date.now(), vc: str(after.vc, 30), by: before ? before.by : uid, going, ts: before ? before.ts : Date.now() };
+      }
+      break;
+    }
+    case "sounds": {
+      const mid = seg[1];
+      if (mid.startsWith("s-")) { const sv = await ctx.server(mid.slice(2)); if (!sv || (sv.owner !== uid && !owner)) deny("Only the server owner can change its sounds."); }
+      else if (!owner) deny("Only the owner can change map sounds.");
+      if (after) {
+        const list = Array.isArray(after.list) ? after.list : [];
+        if (list.length > 8) deny("Up to 8 sounds per server.");
+        after = { list: list.map(x => ({ name: str(x.name, 20).trim(), emoji: str(x.emoji, 8), data: str(x.data, 72000) })).filter(x => /^[a-z0-9_ ]{1,20}$/i.test(x.name) && !hasBad(x.name) && /^data:audio\/(mpeg|ogg|wav|webm|mp4|x-m4a|mp3)(;[a-z0-9=;-]+)?;base64,[A-Za-z0-9+/=]+$/i.test(x.data)) };
+      }
+      break;
+    }
+    case "inbox": { // mentions inbox: inbox/<uid> = {items: [...]}
+      if (seg.length !== 2) deny();
+      const clean = x => ({ id: str(x.id, 40), kind: x.kind === "reply" ? "reply" : "mention", k: str(x.k, 200), from: str(x.from, 80), text: censor(str(x.text, 200)), ts: +x.ts || Date.now() });
+      if (seg[1] === uid) { if (after) after = { items: (Array.isArray(after.items) ? after.items : []).slice(0, 50).map(clean) }; break; }
+      if (op === "delete") deny();
+      const blocks = await ctx.doc("data/users/" + seg[1] + "/blocks");
+      if (blocks && (blocks.ids || []).includes(uid)) return { skip: true };
+      const prev = before && Array.isArray(before.items) ? before.items : [];
+      const have = new Set(prev.map(x => x.id));
+      const fresh = (incoming && Array.isArray(incoming.items) ? incoming.items : []).filter(x => x && x.from === uid && !have.has(x.id)).slice(0, 3)
+        .map(x => Object.assign(clean(x), { from: uid, ts: Date.now() }));
+      if (!fresh.length) return { skip: true };
+      return { after: { items: fresh.concat(prev).slice(0, 50) }, extra };
+    }
     case "freq": { // friend request boxes: freq/<to> = {items: {<from>: time | "ok" | "rm"}}
       if (seg.length !== 2 || op === "delete" && seg[1] !== uid) deny();
       const okVal = v => typeof v === "number" || v === "ok" || v === "rm";
