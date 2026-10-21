@@ -6,7 +6,22 @@
 <title>Gorilla Yapps</title>
 <meta name="description" content="Gorilla Yapps: a fan-made jungle chat hangout with servers, DMs and voice rooms.">
 <meta name="theme-color" content="#3f9a4a">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='21' r='17' fill='%237a5230'/%3E%3Cpath d='M8.6 24 Q8 13.5 20 13.8 Q32 13.5 31.4 24 Q31.5 35.5 20 35.6 Q8.5 35.5 8.6 24Z' fill='%232e2521'/%3E%3Ccircle cx='15.5' cy='21' r='3' fill='%23fff'/%3E%3Ccircle cx='24.5' cy='21' r='3' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gorilla Yapps">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Gorilla Yapps">
+<meta property="og:title" content="Gorilla Yapps">
+<meta property="og:description" content="Yap with your troop! A fan-made jungle chat hangout with servers, DMs and voice rooms.">
+<meta property="og:image" content="https://gorilla-yapp.vercel.app/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://gorilla-yapp.vercel.app/og.png">
+<script>if("serviceWorker" in navigator) addEventListener("load",function(){ navigator.serviceWorker.register("/sw.js").catch(function(){}); });</script>
+<link rel="icon" href="/favicon.png" type="image/png">
 <style>
 :root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box}
 body{margin:0;font:14px system-ui,sans-serif}
@@ -151,6 +166,7 @@ setTimeout(function(){ if(!window.YAPPS){ window.YAPPS={mode:"demo",error:"The s
       else { if (!v.skipped && x.op.op !== "delete" && v.data) putDoc(x.op.path, v.data); fire(x.op.path); x.res(); }
     });
     soon(250);
+    fastSend({ t: "poke" });
   }
   function revert(path, prev) { putDoc(path, prev === undefined ? null : prev); fire(path); }
   async function write(op, path, data) {
@@ -243,9 +259,12 @@ setTimeout(function(){ if(!window.YAPPS){ window.YAPPS={mode:"demo",error:"The s
   }
   function setPeers(list) {
     peers = list.map(x => ({ peer: x.peer, by: x.by, presence: x.presence || {}, isMe: x.by === me.uid, sameTab: x.peer === conn, kind: "viewer", guest: false, updatedAt: x.t || 0 }));
+    fastConnect();
     peerFns.forEach(fn => { try { fn({ peers, joined: [], left: [], updated: [] }); } catch (e) { console.error(e); } });
   }
+  const seenEv = new Set();
   function deliver(e) {
+    if (e.eid) { if (seenEv.has(e.eid)) return; seenEv.add(e.eid); if (seenEv.size > 500) seenEv.delete(seenEv.values().next().value); }
     (evFns.get(e.topic) || []).forEach(fn => { try { fn({ topic: e.topic, data: e.data, by: e.by, peer: e.peer, isMe: e.by === me.uid, sameTab: e.peer === conn, kind: "viewer", guest: false }); } catch (x) { console.error(x); } });
   }
   addEventListener("pagehide", () => {
@@ -260,11 +279,67 @@ setTimeout(function(){ if(!window.YAPPS){ window.YAPPS={mode:"demo",error:"The s
     },
     peers: () => peers,
     onPeers: fn => { peerFns.add(fn); setTimeout(() => fn({ peers, joined: peers, left: [], updated: [] }), 0); return () => peerFns.delete(fn); },
-    emit: async (topic, data) => { emitQ.push({ topic, data: data === undefined ? null : data }); soon(60); },
+    emit: async (topic, data) => {
+      const d = data === undefined ? null : data, eid = newId().slice(0, 16);
+      emitQ.push({ topic, data: d, eid });
+      fastSend({ t: "ev", topic, data: d, eid, peer: conn });
+      soon(fast.conns.size ? 400 : 60);
+    },
     on: (topic, fn) => { if (!evFns.has(topic)) evFns.set(topic, new Set()); evFns.get(topic).add(fn); return () => evFns.get(topic).delete(fn); },
     connected: () => true,
     onConnection: fn => { setTimeout(() => fn(true), 0); return () => {}; }
   };
+
+  /* ---------------- fast lane: browsers poke each other directly (free, via PeerJS) ----------------
+     A poke only means "something changed, check now", and typing/voice events are only trusted from a
+     peer whose id the server's online list ties to a real account. Everything still goes through the server. */
+  const fast = { peer: null, id: null, conns: new Map(), lastPoke: 0, tries: 0 };
+  function fastStart() {
+    if (fast.peer || !me) return;
+    if (!window.Peer) { if (fast.tries++ < 40) setTimeout(fastStart, 1000); return; }
+    try {
+      const p = new window.Peer("gyf-" + newId().slice(0, 14), { debug: 0 });
+      fast.peer = p;
+      p.on("open", pid => { fast.id = pid; room.presence({ fp: pid }); fastConnect(); });
+      p.on("connection", c => fastWire(c));
+      p.on("disconnected", () => { try { p.reconnect(); } catch (e) {} });
+      p.on("error", () => {});
+    } catch (e) { fast.peer = null; }
+  }
+  function fastWire(c) {
+    c.on("open", () => { fast.conns.set(c.peer, c); });
+    c.on("data", d => fastRecv(c.peer, d));
+    c.on("close", () => { if (fast.conns.get(c.peer) === c) fast.conns.delete(c.peer); });
+    c.on("error", () => { if (fast.conns.get(c.peer) === c) fast.conns.delete(c.peer); });
+  }
+  function fastConnect() {
+    if (!fast.peer || !fast.id) return;
+    const want = new Set();
+    for (const x of peers) {
+      const fp = x.presence && x.presence.fp;
+      if (!fp || fp === fast.id || x.sameTab || typeof fp !== "string" || !/^gyf-[A-Za-z0-9]{6,20}$/.test(fp)) continue;
+      want.add(fp);
+      if (fast.conns.has(fp) || fast.id > fp || fast.conns.size >= 30) continue; // the smaller id dials, so each pair connects once
+      try { const c = fast.peer.connect(fp, { reliable: true }); fastWire(c); fast.conns.set(fp, c); } catch (e) {}
+    }
+    for (const [fp, c] of fast.conns) if (!want.has(fp) && c.open) { try { c.close(); } catch (e) {} fast.conns.delete(fp); }
+  }
+  function fastSend(msg) {
+    for (const c of fast.conns.values()) if (c.open) { try { c.send(msg); } catch (e) {} }
+  }
+  function fastRecv(pid, d) {
+    if (!d || typeof d !== "object") return;
+    if (d.t === "poke") {
+      const now = Date.now();
+      if (now - fast.lastPoke > 150) { fast.lastPoke = now; soon(0); } else soon(160);
+    } else if (d.t === "ev" && typeof d.topic === "string" && typeof d.eid === "string") {
+      const who = peers.find(x => x.presence && x.presence.fp === pid);
+      if (!who || who.isMe) return;
+      if (JSON.stringify(d.data || null).length > 4000) return;
+      deliver({ topic: d.topic.slice(0, 30), data: d.data, by: who.by, peer: who.peer, eid: d.eid.slice(0, 24), t: Date.now() });
+    }
+  }
+  addEventListener("pagehide", () => { try { fast.peer && fast.peer.destroy(); } catch (e) {} });
 
   /* ---------------- pictures ---------------- */
   async function shrink(file) {
@@ -288,7 +363,7 @@ setTimeout(function(){ if(!window.YAPPS){ window.YAPPS={mode:"demo",error:"The s
   const assets = {
     async upload(file) {
       if (!file || !/^image\//.test(file.type)) throw { code: "unsupported_type" };
-      const data = await shrink(file);
+      const data = (file.size <= 480 * 1024 && /^image\/(png|jpeg|webp|gif)$/.test(file.type)) ? await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }) : await shrink(file);
       if (data.length > 690000) throw { code: "too_large" };
       try { return await call("upload", { data }); }
       catch (e) { throw { code: e.status === 413 ? "too_large" : e.status === 429 ? "quota_exceeded" : "invalid_argument", message: e.message }; }
@@ -313,7 +388,7 @@ setTimeout(function(){ if(!window.YAPPS){ window.YAPPS={mode:"demo",error:"The s
     token = s.token; ls.set(TOKEN_KEY, token);
     const changed = !me || me.uid !== s.uid;
     me = { uid: s.uid, email: s.email, owner: !!s.owner };
-    if (changed) { authFns.forEach(fn => fn({ uid: me.uid, email: me.email })); soon(10); }
+    if (changed) { authFns.forEach(fn => fn({ uid: me.uid, email: me.email })); soon(10); fastStart(); }
   }
   const auth = (action, extra) => call("auth", Object.assign({ action }, extra || {}));
 
@@ -524,6 +599,36 @@ a{color:var(--link)}
 .searchbar{display:flex;gap:8px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--canopy);background:var(--bark)}
 .searchbar input{flex:1;min-width:0;background:var(--canopy);border:2px solid var(--vine);border-radius:8px;padding:7px 10px}
 .searchbar small{color:var(--fog-dim);white-space:nowrap}
+.fr-page{display:flex;flex-direction:column;gap:6px;padding-bottom:12px}
+.fr-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:4px 0 10px;border-bottom:1px solid var(--vine);margin-bottom:6px}
+.fr-title{font-family:var(--display);font-weight:400;font-size:20px}
+.fr-tabs{flex-wrap:wrap}
+.fr-tabs .fr-addtab{background:var(--online);color:#fff}
+.fr-tabs .fr-addtab[aria-pressed="true"]{background:var(--bark);color:var(--online)}
+.fr-count{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:var(--danger);color:#fff;font-size:11px;line-height:18px;text-align:center}
+.fr-h{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--fog-faint);padding:10px 4px 4px}
+.fr-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:10px;border-top:1px solid var(--vine)}
+.fr-row:hover{background:var(--hover)}
+.fr-who{display:flex;align-items:center;gap:10px;flex:1;min-width:0;text-align:left;padding:0}
+.fr-txt{min-width:0;display:flex;flex-direction:column}
+.fr-txt b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fr-txt small{color:var(--fog-dim);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fr-btns{display:flex;gap:6px;flex:none}
+.fr-empty{color:var(--fog-dim);padding:14px 8px}
+.fr-add input{width:100%;background:var(--canopy);border:2px solid var(--vine);border-radius:10px;padding:12px 14px;font-size:16px}
+.fr-add input:focus-visible{outline:none;border-color:var(--online)}
+.search-scope button{padding:4px 9px;font-size:13px}
+.gs-list{display:flex;flex-direction:column;gap:4px}
+.gs-item{display:flex;gap:10px;text-align:left;padding:8px 10px;border-radius:10px;background:var(--moss);border:1px solid var(--vine)}
+.gs-item:hover{border-color:var(--lava)}
+.gs-body{min-width:0;display:flex;flex-direction:column;gap:2px}
+.gs-meta small{color:var(--fog-faint);font-size:12px}
+.gs-text{overflow-wrap:anywhere;color:var(--fog)}
+.gs-text mark{background:#ffd23f88;color:inherit;border-radius:3px;padding:0 1px}
+.ss-ta{width:100%;background:var(--canopy);border:2px solid var(--vine);border-radius:8px;padding:9px 10px;font:inherit;color:var(--fog);resize:vertical}
+.welcome-card .wc-head{display:flex;align-items:center;gap:12px}
+.wc-icon{width:56px;height:56px;border-radius:16px;background:var(--srv);display:grid;place-items:center;font-family:var(--display);font-size:24px;color:var(--lava-ink);flex:none}
+.wc-msg{margin:0;line-height:1.5;white-space:pre-wrap}
 .older{text-align:center;color:var(--fog-faint);font-size:13px;font-weight:700;padding:8px 0 12px}
 .feed{-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;min-height:0}
 .feed{flex:1;overflow-y:auto;padding:16px 16px 8px;display:flex;flex-direction:column;gap:2px}
@@ -1176,6 +1281,7 @@ body.compact .day{margin:8px 0 2px}
       <button class="icon-btn troop-btn" id="troopBtn" aria-label="Show members" title="Members">👥</button>
     </div>
     <div class="searchbar" id="searchbar" hidden>
+      <div class="seg search-scope" role="tablist" aria-label="Where to search"><button type="button" data-sscope="chan" aria-pressed="true">Here</button><button type="button" data-sscope="server" aria-pressed="false">Server</button><button type="button" data-sscope="dms" aria-pressed="false">DMs</button></div>
       <input id="searchInput" placeholder="Search this channel" aria-label="Search messages" autocomplete="off">
       <small id="searchCount"></small>
       <button class="icon-btn" id="searchClose" aria-label="Close search">✕</button>
@@ -1613,7 +1719,8 @@ function makeStore(){
       set:(path,d)=>db.doc(path).set(d),
       update:(path,d)=>db.doc(path).update(d),
       del:path=>db.doc(path).delete(),
-      async add(col,d){ const r=db.collection(col).doc(); await r.set(d); return r.id; }
+      async add(col,d){ const r=db.collection(col).doc(); await r.set(d); return r.id; },
+      async get(path){ const d=await db.doc(path).get(); return d.exists?d.data():null; }
     };
   }
   local.kv=local.kv||{};
@@ -1626,7 +1733,8 @@ function makeStore(){
     async set(path,d){ KV[path]=JSON.parse(JSON.stringify(d)); fire(); },
     async update(path,d){ if(!KV[path]) throw {code:"invalid_argument"}; KV[path]=deepMerge(KV[path],JSON.parse(JSON.stringify(d))); fire(); },
     async del(path){ delete KV[path]; fire(); },
-    async add(col,d){ const id="k"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); KV[col+"/"+id]=JSON.parse(JSON.stringify(d)); fire(); return id; }
+    async add(col,d){ const id="k"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); KV[col+"/"+id]=JSON.parse(JSON.stringify(d)); fire(); return id; },
+    async get(path){ return KV[path]?JSON.parse(JSON.stringify(KV[path])):null; }
   };
 }
 
@@ -1696,7 +1804,8 @@ function startServers(){
       id:"s-"+s.docId, docId:s.docId, name:String(s.name).slice(0,32), short:s.icon||String(s.name).slice(0,2), color:s.color||"#5fd068",
       owner:s.owner, desc:String(s.desc||"").slice(0,120), bans:Array.isArray(s.bans)?s.bans:[],
       private:!!s.private, code:s.code||"", members:Array.isArray(s.members)?s.members:[],
-      chans:s.chans.slice(0,20).map(c=>({id:String(c.id).slice(0,24), topic:String(c.topic||"").slice(0,120), ann:!!c.ann})), voice:["Hangout VC"]
+      chans:s.chans.slice(0,20).map(c=>({id:String(c.id).slice(0,24), topic:String(c.topic||"").slice(0,120), ann:!!c.ann})), voice:["Hangout VC"],
+      welcome: s.welcome && s.welcome.on ? {on:true, msg:String(s.welcome.msg||"").slice(0,300), rules:String(s.welcome.rules||"").slice(0,600), tags:(Array.isArray(s.welcome.tags)?s.welcome.tags:[]).map(t=>String(t).slice(0,20)).filter(Boolean).slice(0,8)} : null
     })).filter(s=>!s.bans.includes(S.uid));
     if(S.mapId!=="home" && !allMaps().some(m=>m.id===S.mapId)){ S.mapId="forest"; S.chan="general"; if(S.loggedIn) switchTo(); }
     if(S.loggedIn){ syncWatchers(); renderRail(); renderChans(); }
@@ -2356,6 +2465,7 @@ function switchTo(){
   S.msgLimit=100; S.loadingOlder=false; S.keepAnchor=null;
   watchMsgs(k);
   renderAll(); syncPresence();
+  maybeWelcome();
 }
 function loadOlder(){
   const k=key(), f=$("feed");
@@ -2403,10 +2513,10 @@ function onLast(map){
     const ci=chanInfo(k); if(!ci.mine) continue;
     if((local.muted||{})[k]) continue;
     const who=dn(m.uid), snip=censor(m.text||(m.sticker?"[sticker]":m.img?"[image]":m.poll?"📊 poll":"sent you a message")).slice(0,50);
-    if(ci.dm){ if(!local.dmMute) ook(); toast("💬 "+who+": "+snip); }
-    else if(ci.group){ if(!local.dmMute) ook(); const g=S.groups[k.slice(4)]; toast("👥 "+groupName(g)+" · "+who+": "+snip); }
-    else if(ci.chan && ci.chan.ann){ ook(); toast("📢 New announcement in "+ci.map.name+": "+snip); }
-    else if(mentionsMe(m.text,m.uid)){ ook(); tagFlash(m.uid); toast(`${who} mentioned you in #${ci.chan.id} · ${ci.map.name}`); }
+    if(ci.dm){ if(!local.dmMute) ook(); toast("💬 "+who+": "+snip); desktopNotify(who, snip, k); }
+    else if(ci.group){ if(!local.dmMute) ook(); const g=S.groups[k.slice(4)]; toast("👥 "+groupName(g)+" · "+who+": "+snip); desktopNotify(groupName(g), who+": "+snip, k); }
+    else if(ci.chan && ci.chan.ann){ ook(); toast("📢 New announcement in "+ci.map.name+": "+snip); desktopNotify("📢 "+ci.map.name, snip, k); }
+    else if(mentionsMe(m.text,m.uid)){ ook(); tagFlash(m.uid); toast(`${who} mentioned you in #${ci.chan.id} · ${ci.map.name}`); desktopNotify(who+" in #"+ci.chan.id, snip, k); }
   }
   if(S.loggedIn){ renderRail(); renderChans(); }
 }
@@ -2545,6 +2655,17 @@ async function uploadImage(file){
   if(!S.assets) return;
   if(!/^image\/(png|jpeg|gif|webp)$/.test(file.type)){ toast("Pick a PNG, JPG, GIF or WebP image."); return; }
   if(file.size>15*1024*1024){ toast("That image is over 15 MB. Try a smaller one."); return; }
+  if(!picCheckerReady()){ toast("Pictures can't be sent here because the safety checker isn't available."); return; }
+  toast("🛡 Checking your picture…");
+  { const frames=[];
+    try{
+      const dec=await decodeFrames(file); frames.push(...dec.frames);
+      const checks=[]; for(const f of frames.slice(0,4)) checks.push(await cropTo(f,512,512,"image/jpeg",.85));
+      const v=await checkPicture(checks,"chat");
+      if(!v.ok){ toast("🚫 Not sent: "+v.reason); return; }
+    }catch(e){ toast(e && e.message && !/^encode$/.test(e.message) ? e.message : "Couldn't check that picture. Try another one."); return; }
+    finally{ frames.forEach(f=>{ try{ f.close(); }catch(e){} }); }
+  }
   toast("Uploading image…");
   try{
     const r=await S.assets.upload(file);
@@ -2598,6 +2719,27 @@ function renderRail(){
     return `${i===builtinMaps().length?"<hr>":""}<button class="map ${m.id===S.mapId?"active":""} ${u.state?"unread":""}" style="--srv:${esc(m.color)}" data-map="${esc(m.id)}" title="${esc(m.name)}" aria-label="${esc(m.name)} server${u.pings?`, ${u.pings} mentions`:""}">${esc(m.short)}${u.pings?`<span class="ping">${u.pings}</span>`:""}</button>`;
   }).join("") + `${S.servers.length?"":"<hr>"}${S.readonly?"":`<button class="map add" id="addServer" title="Create or join a server" aria-label="Create or join a server">+</button>`}<div id="railExtras" class="rail-extras"></div>`;
   renderRailExtras();
+  const pc=pendingCount();
+  if(pc){ const hb=$("rail").querySelector('[data-map="home"]'); if(hb) hb.insertAdjacentHTML("beforeend",`<span class="ping">${pc}</span>`); }
+  updateTabBadge(dmUnread + pc + maps.reduce((n,m)=>n+(mapUnread(m).pings||0),0));
+}
+function updateTabBadge(n){
+  const t=(n?`(${n>99?"99+":n}) `:"")+"Gorilla Yapps";
+  if(document.title!==t) document.title=t;
+  const link=document.querySelector('link[rel="icon"]');
+  if(!link) return;
+  if(!S.iconBase) S.iconBase=link.href;
+  if(S.iconN===n) return; S.iconN=n;
+  if(!n){ link.href=S.iconBase; return; }
+  const img=new Image(); img.onload=()=>{ const c=document.createElement("canvas"); c.width=c.height=64; const x=c.getContext("2d"); x.drawImage(img,0,0,64,64); x.fillStyle="#e5484d"; x.beginPath(); x.arc(48,16,15,0,7); x.fill(); x.fillStyle="#fff"; x.font="bold 20px sans-serif"; x.textAlign="center"; x.textBaseline="middle"; x.fillText(n>9?"9+":String(n),48,17); try{ link.href=c.toDataURL("image/png"); }catch(e){} };
+  img.src=S.iconBase;
+}
+function desktopNotify(title, body, k){
+  try{
+    if(!local.desktopNotif || !("Notification" in window) || Notification.permission!=="granted" || !document.hidden || S.status==="dnd") return;
+    const n=new Notification(title,{body, tag:k, icon:"/icon-192.png"});
+    n.onclick=()=>{ window.focus(); n.close(); const ci=chanInfo(k); if(ci.dm){ openDM(k.slice(3).split("~").find(x=>x!==S.uid)||S.uid); } else if(ci.group){ S.mapId="home"; S.chan="g:"+k.slice(4); switchTo(); } else if(ci.map){ S.mapId=ci.map.id; S.chan=ci.chan.id; switchTo(); } };
+  }catch(e){}
 }
 function renderDMList(){
   const host=$("dmList"); if(!host) return;
@@ -2612,7 +2754,9 @@ function renderDMList(){
     rows=Object.entries(ts).sort((a,b)=>b[1]-a[1]).map(([u])=>u).filter(u=>u!==S.uid && !S.blocks.has(u));
   }
   const on=statusMap();
-  host.innerHTML = rows.length ? rows.map(u=>{
+  const pc=pendingCount();
+  const frLink=`<button type="button" class="chan fr-link ${S.mapId==="home"&&!S.chan?"active":""}" data-friendshome><span class="glyph">👥</span><span class="name">Friends</span>${pc?`<span class="ping">${pc}</span>`:""}</button>`;
+  host.innerHTML = frLink + (rows.length ? rows.map(u=>{
     if(u.startsWith("g:")){
       const g=S.groups[u.slice(2)]; if(!g) return "";
       const k="gdm~"+g.id, last=S.latest[k], unread=unreadState(k), mem=g.members.filter(x=>x!==S.uid);
@@ -2620,7 +2764,7 @@ function renderDMList(){
     }
     const p=prof(u), st=on.get(u), last=S.latest[dmKey(u)], unread=unreadState(dmKey(u));
     return `<button class="chan dm ${S.chan===u?"active":""} ${unread?"unread":""}" data-dm="${esc(u)}"><span class="av sm">${av(p)}${st&&st!=="invisible"?`<span class="dot ${st}"></span>`:""}</span><span class="name"><b>${esc(p.display||p.name)}</b><small>${last?esc(censor(last.text?(last.uid===S.uid?"You: ":"")+last.text:last.uid===S.uid?"You sent a message":"New message")):esc(censor(p.status||""))}</small></span>${unread?`<span class="ping">•</span>`:""}</button>`;
-  }).join("") : `<p class="note" style="text-align:left;padding:8px">${q?"No gorillas with that name.":"No DMs yet. Search for a gorilla above, or open someone's profile and tap Message."}</p>`;
+  }).join("") : `<p class="note" style="text-align:left;padding:8px">${q?"No gorillas with that name.":"No DMs yet. Search for a gorilla above, or open someone's profile and tap Message."}</p>`);
 }
 function renderChans(){
   const m=curMap();
@@ -2746,6 +2890,144 @@ function openEmojiPicker(anchor, onPick){
 }
 document.addEventListener("mousedown",e=>{ const p=$("emojiPop"); if(p && !p.hidden && !p.contains(e.target) && !(e.target.closest&&e.target.closest("#emojiBtn"))){ p.hidden=true; p.dataset.open=""; } });
 document.addEventListener("keydown",e=>{ const p=$("emojiPop"); if(e.key==="Escape" && p && !p.hidden){ p.hidden=true; p.dataset.open=""; } });
+
+/* ================= friends page ================= */
+function friendsPageHTML(){
+  const tab=S.friendTab||"online", sm=statusMap();
+  const isOn=u=>sm.has(u)&&sm.get(u)!=="invisible";
+  const friends=[...S.friends].filter(u=>S.profiles[u] && !S.blocks.has(u)).sort((a,b)=>(isOn(b)-isOn(a))||dn(a).localeCompare(dn(b)));
+  const inc=Object.keys(S.freqIn).filter(u=>typeof S.freqIn[u]==="number" && S.profiles[u] && !S.blocks.has(u));
+  const out=[...S.freqOut].filter(u=>S.profiles[u]);
+  const row=(u,btns,sub)=>{ const p=prof(u); return `<div class="fr-row"><button type="button" class="fr-who" data-profile="${esc(u)}"><span class="av">${av(p)}<span class="dot ${isOn(u)?sm.get(u):"invisible"}"></span></span><span class="fr-txt"><b>${esc(dn(u))}</b><small>${sub||(isOn(u)?ST_LABEL[sm.get(u)]:"Offline")}${p.status&&!sub?" · "+esc(censor(p.status)):""}</small></span></button><span class="fr-btns">${btns}</span></div>`; };
+  const tabs=[["online","Online"],["all","All"],["pending","Pending"+(inc.length?` <span class="fr-count">${inc.length}</span>`:"")],["add","Add Friend"]];
+  let body="";
+  if(tab==="online"||tab==="all"){
+    const list=tab==="online"?friends.filter(isOn):friends;
+    body=`<div class="fr-h">${tab==="online"?"Online":"All friends"} — ${list.length}</div>`+(list.length?list.map(u=>row(u,`<button type="button" class="icon-btn" data-frdm="${esc(u)}" title="Message" aria-label="Message ${esc(dn(u))}">💬</button><button type="button" class="icon-btn" data-frrm="${esc(u)}" title="Remove friend" aria-label="Remove ${esc(dn(u))}">✕</button>`)).join("")
+      :`<div class="fr-empty">🦍 ${friends.length?"None of your friends are online right now.":"No friends yet. Tap <b>Add Friend</b> to send your first request!"}</div>`);
+  } else if(tab==="pending"){
+    body=`<div class="fr-h">Incoming — ${inc.length}</div>`+(inc.length?inc.map(u=>row(u,`<button type="button" class="btn primary" data-fracc="${esc(u)}">✓ Accept</button><button type="button" class="btn" data-frdec="${esc(u)}">Decline</button>`,"Wants to be your friend")).join(""):`<div class="fr-empty">No new requests.</div>`)
+      +`<div class="fr-h">Sent — ${out.length}</div>`+(out.length?out.map(u=>row(u,`<button type="button" class="btn" data-frcan="${esc(u)}">Cancel</button>`,"Waiting for them to accept")).join(""):`<div class="fr-empty">You haven't sent any requests.</div>`);
+  } else {
+    const q=(S.frFind||"").trim().toLowerCase();
+    const people=Object.keys(S.profiles).filter(u=>u!==S.uid && !S.blocks.has(u) && !S.friends.has(u) && (!q || prof(u).name.toLowerCase().includes(q) || (prof(u).display||"").toLowerCase().includes(q))).sort((a,b)=>dn(a).localeCompare(dn(b))).slice(0,40);
+    body=`<form class="fr-add" id="frAddForm"><input id="frFind" placeholder="Type a username, like BananaBoss" value="${esc(S.frFind||"")}" autocomplete="off" aria-label="Find a gorilla by username"></form>
+      <div class="fr-h">${q?"Matching gorillas":"Gorillas on Gorilla Yapps"}</div>`+(people.length?people.map(u=>{ const st=friendState(u);
+        return row(u, st==="outgoing"?`<button type="button" class="btn" data-frcan="${esc(u)}">✉️ Sent · cancel</button>`:st==="incoming"?`<button type="button" class="btn primary" data-fracc="${esc(u)}">✓ Accept</button>`:`<button type="button" class="btn primary" data-fradd="${esc(u)}">Add friend</button>`, "@"+esc(prof(u).name)); }).join(""):`<div class="fr-empty">${q?"Nobody has that username.":"No other gorillas yet. Share the site so your friends can sign up!"}</div>`);
+  }
+  return `<div class="fr-page"><div class="fr-top"><b class="fr-title">👥 Friends</b><div class="seg fr-tabs" role="tablist">${tabs.map(([k,l])=>`<button type="button" role="tab" data-frtab="${k}" aria-pressed="${k===tab}" class="${k==="add"?"fr-addtab":""}">${l}</button>`).join("")}</div></div>${body}</div>`;
+}
+function wireFriendsPage(){
+  const page=$("feed").querySelector(".fr-page"); if(!page) return;
+  page.onclick=async e=>{
+    const t=e.target, g=(a)=>{ const b=t.closest("["+a+"]"); return b?b.getAttribute(a):null; };
+    let v;
+    if((v=g("data-frtab"))){ S.friendTab=v; renderFeed(); if(v==="add") setTimeout(()=>{ const i=$("frFind"); if(i) i.focus(); },0); return; }
+    if((v=g("data-frdm"))){ openDM(v); return; }
+    if((v=g("data-frrm"))){ const b=t.closest("[data-frrm]"); if(b.dataset.armed!=="1"){ b.dataset.armed="1"; b.textContent="?"; b.title="Tap again to remove"; return; } await removeFriend(v); return; }
+    if((v=g("data-fracc"))){ await acceptFriend(v); return; }
+    if((v=g("data-frdec"))){ await declineFriend(v); return; }
+    if((v=g("data-frcan"))){ await cancelFriendRequest(v); return; }
+    if((v=g("data-fradd"))){ await sendFriendRequest(v); return; }
+  };
+  const f=$("frFind");
+  if(f){ f.oninput=()=>{ S.frFind=f.value; const pos=f.selectionStart; renderFeed(); const n=$("frFind"); if(n){ n.focus(); n.setSelectionRange(pos,pos); } };
+    $("frAddForm").onsubmit=e=>{ e.preventDefault(); const q=f.value.trim().replace(/^@/,"").toLowerCase(); const hit=Object.keys(S.profiles).find(u=>u!==S.uid && prof(u).name.toLowerCase()===q); if(hit) sendFriendRequest(hit); else toast("Nobody has that exact username."); }; }
+}
+
+/* ================= search everywhere ================= */
+S.gsCache={};
+function searchKeys(){
+  if(S.searchScope==="dms" || curMap().home){
+    const ks=new Set(Object.keys(S.dmPeers||{}).map(u=>dmKey(u)));
+    Object.keys(S.latest||{}).forEach(k=>{ if((k.startsWith("dm~")&&k.slice(3).split("~").includes(S.uid)) || k.startsWith("gdm~")) ks.add(k); });
+    Object.values(S.groups||{}).forEach(g=>ks.add("gdm~"+g.id));
+    return [...ks].slice(0,40);
+  }
+  const m=curMap(); return m.chans.filter(c=>!c.rules).map(c=>m.id+"."+c.id);
+}
+async function fetchRecent(k, n){
+  const hit=S.gsCache[k]; if(hit && Date.now()-hit.t<60000) return hit.list;
+  let list=[];
+  try{
+    if(S.mode==="live"){ const sn=await S.db.collection(pathFor(k)).orderBy("ts","desc").limit(n).get(); list=sn.docs.map(d=>Object.assign({id:d.id},d.data())); }
+    else { list=((local.msgs||{})[k]||[]).slice(-n).reverse(); }
+  }catch(e){ list=[]; }
+  S.gsCache[k]={t:Date.now(), list}; return list;
+}
+function keyLabel(k){
+  if(k.startsWith("dm~")){ const o=k.slice(3).split("~").find(x=>x!==S.uid)||S.uid; return "@"+dn(o); }
+  if(k.startsWith("gdm~")){ const g=(S.groups||{})[k.slice(4)]; return "👥 "+(g?groupName(g):"Group"); }
+  const ci=chanInfo(k); return ci.map?"#"+(ci.chan?ci.chan.id:k.split(".")[1])+" · "+ci.map.name:k;
+}
+let gsTimer=null;
+function queueGlobalSearch(){
+  clearTimeout(gsTimer);
+  const q=S.search.trim().toLowerCase();
+  if(q.length<2){ S.gs={q, results:[], busy:false}; renderFeed(); return; }
+  S.gs={q, results:(S.gs&&S.gs.q===q)?S.gs.results:[], busy:true}; renderFeed();
+  gsTimer=setTimeout(async()=>{
+    const keys=searchKeys(), res=[];
+    await Promise.all(keys.map(async k=>{ const list=await fetchRecent(k,300); list.forEach(x=>{ if(!x||S.blocks.has(x.uid)) return; const t=(x.text||"")+" "+(x.poll?x.poll.q:"");
+      if(t.toLowerCase().includes(q) || prof(x.uid).name.toLowerCase().includes(q)) res.push(Object.assign({k},x)); }); }));
+    if(S.search.trim().toLowerCase()!==q) return;
+    res.sort((a,b)=>b.ts-a.ts);
+    S.gs={q, results:res.slice(0,100), busy:false}; renderFeed();
+  },350);
+}
+function renderGlobalSearch(feed,q){
+  const g=S.gs||{q,results:[],busy:true};
+  const hl=t=>{ const e=esc(censor(t||"")); const i=e.toLowerCase().indexOf(esc(q)); return i<0?e:e.slice(0,i)+"<mark>"+e.slice(i,i+esc(q).length)+"</mark>"+e.slice(i+esc(q).length); };
+  $("searchCount").textContent = q.length<2 ? "" : g.busy ? "Searching…" : `${g.results.length} found`;
+  feed._h=null;
+  feed.innerHTML=`<div class="gs-list">${q.length<2?`<p class="note">Type at least 2 letters.</p>`:g.results.length?g.results.map(x=>{ const p=prof(x.uid); return `<button type="button" class="gs-item" data-gsgo="${esc(x.k)}|${esc(x.id)}"><span class="av sm">${av(p)}</span><span class="gs-body"><span class="gs-meta"><b>${esc(dn(x.uid))}</b> <small>${esc(keyLabel(x.k))} · ${fmtDay(x.ts)} ${fmtTime(x.ts)}</small></span><span class="gs-text">${hl(x.text||(x.poll?"📊 "+x.poll.q:x.sticker?"[sticker]":x.img?"[image]":""))}</span></span></button>`; }).join(""):g.busy?`<div class="spinner">Searching…</div>`:`<p class="note">Nothing found for “${esc(q)}”.</p>`}</div>`;
+  feed.querySelector(".gs-list").onclick=e=>{ const b=e.target.closest("[data-gsgo]"); if(!b) return; const [k,id]=b.dataset.gsgo.split("|");
+    S.search=""; $("searchInput").value=""; $("searchbar").hidden=true; $("searchBtn").setAttribute("aria-pressed","false");
+    S.pendingFlash=id;
+    if(k.startsWith("dm~")) openDM(k.slice(3).split("~").find(x=>x!==S.uid)||S.uid);
+    else if(k.startsWith("gdm~")){ S.mapId="home"; S.chan="g:"+k.slice(4); switchTo(); }
+    else { const i=k.indexOf("."); S.mapId=k.slice(0,i); S.chan=k.slice(i+1); switchTo(); } };
+}
+
+/* ================= server welcome screen ================= */
+function maybeWelcome(force){
+  const m=curMap();
+  if(!m || m.builtin || m.home || !m.welcome || !m.welcome.on) return;
+  local.welcomed=local.welcomed||{};
+  if(!force && (local.welcomed[S.uid+"|"+m.id] || m.owner===S.uid)) return;
+  if(!force && !$("modal").hidden) return;
+  const mine=new Set((((myProfile()||{}).srvTags)||{})[m.docId]||[]);
+  const rules=m.welcome.rules.split("\n").map(x=>x.trim()).filter(Boolean);
+  openModal(`<div class="card welcome-card" role="dialog" aria-modal="true" aria-labelledby="wcTitle" style="width:min(480px,100%)">
+    <div class="wc-head" style="--srv:${esc(m.color)}"><span class="wc-icon">${esc(m.short)}</span><h2 id="wcTitle">Welcome to ${esc(m.name)}!</h2></div>
+    ${m.welcome.msg?`<p class="wc-msg">${esc(censor(m.welcome.msg))}</p>`:""}
+    ${rules.length?`<div class="field"><span class="lbl">📜 Server rules</span><ol class="rules">${rules.map(r=>`<li><b>${esc(censor(r))}</b></li>`).join("")}</ol></div>`:""}
+    ${m.welcome.tags.length?`<div class="field"><span class="lbl">🏷️ Pick your roles</span><div class="chips" id="wcTags">${m.welcome.tags.map(t=>`<button type="button" class="chip" data-wctag="${esc(t)}" aria-pressed="${mine.has(t)}">${esc(t)}</button>`).join("")}</div></div>`:""}
+    <button class="big-btn" id="wcGo">Let's go! 🦍</button></div>`);
+  const picked=new Set(mine);
+  if($("wcTags")) $("wcTags").onclick=e=>{ const b=e.target.closest("[data-wctag]"); if(!b) return; const t=b.dataset.wctag; picked.has(t)?picked.delete(t):picked.add(t); b.setAttribute("aria-pressed",picked.has(t)); };
+  $("wcGo").onclick=async()=>{
+    local.welcomed[S.uid+"|"+m.id]=1; saveLocal(); closeModal();
+    const tags=[...picked].filter(t=>m.welcome.tags.includes(t));
+    const cur=((myProfile()||{}).srvTags)||{};
+    if(JSON.stringify(cur[m.docId]||[])!==JSON.stringify(tags)){
+      const all=Object.assign({},cur,{[m.docId]:tags});
+      try{ await api.updateProfile({srvTags:all}); myProfile().srvTags=all; renderTroop(); }catch(e){}
+    }
+  };
+}
+
+/* ================= install as an app ================= */
+window.addEventListener("beforeinstallprompt", e=>{ e.preventDefault(); S.installEvt=e; });
+window.addEventListener("appinstalled", ()=>{ S.installEvt=null; });
+function installText(){
+  const standalone=(()=>{ try{ return matchMedia("(display-mode: standalone)").matches || navigator.standalone; }catch(e){ return false; } })();
+  if(standalone) return "✅ You're using the app version.";
+  if(S.installEvt) return "Add it to your home screen or desktop so it opens like an app.";
+  if(/iphone|ipad|ipod/i.test(navigator.userAgent)) return "On iPhone or iPad: tap the Share button ⬆️ in Safari, then “Add to Home Screen”.";
+  if(/android/i.test(navigator.userAgent)) return "On Android: open the browser menu ⋮ and tap “Install app” or “Add to Home screen”.";
+  return "In Chrome or Edge: click the install icon in the address bar, or open the menu ⋮ → “Install Gorilla Yapps”.";
+}
 function renderPractice(){
   const b=$("practiceBar"); if(!b) return;
   if(!S.practiceWhy || local.practiceHide){ b.hidden=true; return; }
@@ -2759,6 +3041,7 @@ function renderFeed(){
   const nearBottom = feed.scrollHeight-feed.scrollTop-feed.clientHeight < 140;
   const m=curMap(), c=m.chans.find(x=>x.id===S.chan)||{topic:""};
   const q=S.search.trim().toLowerCase();
+  if(q && S.searchScope && S.searchScope!=="chan"){ renderGlobalSearch(feed,q); return; }
   const list = q ? S.msgs.filter(x=>(x.text||"").toLowerCase().includes(q) || prof(x.uid).name.toLowerCase().includes(q)) : S.msgs;
   $("searchCount").textContent = q ? `${list.length} found` : "";
   if(isRulesChan() && !m.home){
@@ -2768,6 +3051,10 @@ function renderFeed(){
     feed._h=null; feed.dataset.k=key(); renderTop(); renderJump(); return;
   }
   if(m.home && !S.chan){
+    feed.innerHTML=friendsPageHTML(); wireFriendsPage();
+    feed._h=null; feed.dataset.k=key(); renderTop(); return;
+  }
+  if(false){
     const sm=statusMap(), on=Object.keys(S.profiles).filter(u=>u!==S.uid && sm.has(u) && sm.get(u)!=="invisible");
     feed.innerHTML=`<div class="welcome"><div class="big">💬</div><h2 class="sign">Your DMs</h2><p>Pick a conversation on the left, search for a gorilla, or tap someone below to start chatting.</p></div>
       <div class="dm-grid">${(on.length?on:Object.keys(S.profiles).filter(u=>u!==S.uid)).slice(0,24).map(u=>{const p=prof(u);return `<button class="dm-pick" data-dm="${esc(u)}"><span class="av lg">${av(p)}</span><b>${esc(p.name)}</b><small>${sm.has(u)?ST_LABEL[sm.get(u)]:"Offline"}</small></button>`;}).join("") || `<p class="note">No other gorillas yet. Share the page with friends so they can sign up.</p>`}</div>`;
@@ -2822,6 +3109,7 @@ function renderFeed(){
   renderJump();
   renderTop();
   hydrateImages();
+  if(S.pendingFlash){ const el=document.getElementById("msg-"+S.pendingFlash); if(el){ S.pendingFlash=null; setTimeout(()=>jumpTo(el.id.slice(4)),60); } }
 }
 function hydrateImages(){
   if(!window.YAPPS || !YAPPS.getImage) return;
@@ -2956,21 +3244,79 @@ function renderMe(){
 function loadFriends(){
   if(S.mode==="live"){
     try{
-      S.db.doc("data/users/"+S.uid+"/friends").onSnapshot(d=>{ const ids=(d.exists && Array.isArray(d.data().ids))?d.data().ids:[]; S.friends=new Set(ids); if(S.loggedIn) renderTroop(); }, ()=>{});
+      S.db.doc("data/users/"+S.uid+"/friends").onSnapshot(d=>{ const x=d.exists?d.data():{}; S.friends=new Set(Array.isArray(x.ids)?x.ids:[]); S.freqOut=new Set(Array.isArray(x.out)?x.out:[]); if(S.loggedIn) renderAll(); }, ()=>{});
+      store.watchDoc("freq/"+S.uid, onFreqInbox);
       S.db.doc("data/users/"+S.uid+"/blocks").onSnapshot(d=>{ const ids=(d.exists && Array.isArray(d.data().ids))?d.data().ids:[]; S.blocks=new Set(ids); if(S.loggedIn){ renderFeed(); renderChans(); } }, ()=>{});
     }catch(e){}
-  } else { S.friends=new Set(local.friends||[]); S.blocks=new Set(local.blocks||[]); }
+  } else { S.friends=new Set(local.friends||[]); S.freqOut=new Set(local.freqOut||[]); S.blocks=new Set(local.blocks||[]); store.watchDoc("freq/"+S.uid, onFreqInbox); }
 }
 let friendChain=Promise.resolve();
-function toggleFriend(uid){
-  const had=S.friends.has(uid);
-  had?S.friends.delete(uid):S.friends.add(uid);
-  const ids=[...S.friends];
-  toast(had?"Removed from friends":"Added "+prof(uid).name+" as a friend ★");
-  renderTroop();
-  if(S.mode==="live") friendChain=friendChain.then(()=>S.db.doc("data/users/"+S.uid+"/friends").set({ids})).catch(()=>toast("Couldn't save your friends list."));
-  else { local.friends=ids; saveLocal(); }
+S.freqIn={}; S.freqOut=new Set();
+function saveFriends(){
+  const ids=[...S.friends], out=[...S.freqOut];
+  if(S.mode==="live") friendChain=friendChain.then(()=>S.db.doc("data/users/"+S.uid+"/friends").set({ids,out})).catch(()=>toast("Couldn't save your friends list."));
+  else { local.friends=ids; local.freqOut=out; saveLocal(); }
 }
+// put my answer (a time = request, "ok" = accepted, "rm" = unfriended, null = take it back) in someone's request box
+async function setFreqEntry(to, val){
+  const path="freq/"+to;
+  const d=(await store.get(path).catch(()=>null))||{};
+  const items=Object.assign({}, d.items||{});
+  if(val===null) delete items[S.uid]; else items[S.uid]=val;
+  await store.set(path,{items});
+}
+function friendState(uid){
+  if(S.friends.has(uid)) return "friend";
+  if(typeof S.freqIn[uid]==="number") return "incoming";
+  if(S.freqOut.has(uid)) return "outgoing";
+  return "none";
+}
+const pendingCount = () => Object.entries(S.freqIn).filter(([u,v])=>typeof v==="number" && !S.blocks.has(u) && S.profiles[u]).length;
+async function sendFriendRequest(uid){
+  if(uid===S.uid || S.friends.has(uid)) return;
+  if(friendState(uid)==="incoming") return acceptFriend(uid);
+  S.freqOut.add(uid); saveFriends(); renderAll();
+  try{ await setFreqEntry(uid, Date.now()); toast("Friend request sent to "+dn(uid)+" ✉️"); }catch(e){ S.freqOut.delete(uid); saveFriends(); renderAll(); toast("Couldn't send the request. Try again."); }
+}
+async function acceptFriend(uid){
+  S.friends.add(uid); S.freqOut.delete(uid); delete S.freqIn[uid]; saveFriends(); renderAll();
+  toast("You and "+dn(uid)+" are friends now! ★");
+  try{ await setFreqEntry(uid,"ok"); await store.set("freq/"+S.uid,{items:cleanInbox()}); }catch(e){}
+}
+async function declineFriend(uid){
+  delete S.freqIn[uid]; renderAll();
+  try{ await store.set("freq/"+S.uid,{items:cleanInbox()}); }catch(e){}
+}
+async function cancelFriendRequest(uid){
+  S.freqOut.delete(uid); saveFriends(); renderAll();
+  try{ await setFreqEntry(uid,null); }catch(e){}
+}
+async function removeFriend(uid){
+  S.friends.delete(uid); saveFriends(); renderAll(); toast("Removed "+dn(uid)+" from friends");
+  try{ await setFreqEntry(uid,"rm"); }catch(e){}
+}
+function cleanInbox(){ const o={}; Object.entries(S.freqIn).forEach(([u,v])=>{ if(typeof v==="number") o[u]=v; }); return o; }
+function onFreqInbox(d){
+  const items=(d && d.items && typeof d.items==="object") ? d.items : {};
+  let changed=false;
+  for(const [u,v] of Object.entries(items)){
+    if(v==="ok"){ if(!S.friends.has(u)){ S.friends.add(u); toast(dn(u)+" accepted your friend request! ★"); } S.freqOut.delete(u); changed=true; }
+    else if(v==="rm"){ if(S.friends.has(u)) S.friends.delete(u); changed=true; }
+  }
+  const before=JSON.stringify(cleanInbox());
+  S.freqIn={}; Object.entries(items).forEach(([u,v])=>{ if(typeof v==="number" && !S.friends.has(u)) S.freqIn[u]=v; });
+  if(JSON.stringify(cleanInbox())!==before && S.freqPrimed && pendingCount()) { if(!local.dmMute) ook(); }
+  S.freqPrimed=true;
+  if(changed){ saveFriends(); store.set("freq/"+S.uid,{items:cleanInbox()}).catch(()=>{}); }
+  if(S.loggedIn) renderAll();
+}
+function toggleFriend(uid){
+  const st=friendState(uid);
+  if(st==="friend") removeFriend(uid);
+  else if(st==="outgoing") cancelFriendRequest(uid);
+  else sendFriendRequest(uid);
+}
+const friendBtnLabel = uid => ({friend:"★ Friends", incoming:"✓ Accept request", outgoing:"✉️ Request sent", none:"☆ Add friend"})[friendState(uid)];
 
 let blockChain=Promise.resolve();
 function toggleBlock(uid){
@@ -3259,8 +3605,25 @@ async function removePics(uid){
   try{ if(uid===S.uid) await api.updateProfile({avatar:null,banner:null}); else await store.update("profiles/"+uid,{avatar:null,banner:null}); if(S.profiles[uid]){ S.profiles[uid].avatar=null; S.profiles[uid].banner=null; } renderAll(); return true; }
   catch(e){ toast("Couldn't remove it. Try again."); return false; }
 }
+const ON_SITE = () => !!(window.YAPPS && window.YAPPS.kind==="vercel");
+const picCheckerReady = () => !!(S.sample || ON_SITE());
+const MAX_GIF = () => ON_SITE() ? 480*1024 : 6*1024*1024;
+const NSFW_URL = "https://cdn.jsdelivr.net/npm/nsfwjs@4.2.1/+esm";
+async function nsfwCheck(images){
+  if(!window.__nsfw) window.__nsfw = import(NSFW_URL).then(m=>m.load("MobileNetV2"));
+  let model;
+  try{ model = await window.__nsfw; }catch(e){ window.__nsfw=null; throw new Error("The picture checker couldn't load. Check your internet and try again."); }
+  for(const b of images){
+    const bmp = await createImageBitmap(b);
+    const c=document.createElement("canvas"); c.width=224; c.height=224;
+    c.getContext("2d").drawImage(bmp,0,0,224,224); try{ bmp.close(); }catch(e){}
+    const p={}; (await model.classify(c)).forEach(x=>{ p[x.className]=x.probability; });
+    if((p.Porn||0)>0.2 || (p.Hentai||0)>0.2 || (p.Sexy||0)>0.3) return {ok:false, reason:"It looks like it shows grown-up stuff."};
+  }
+  return {ok:true};
+}
 function mediaSettingsHTML(p){
-  const canUp = !!(S.assets && S.sample && !S.readonly);
+  const canUp = !!(S.assets && picCheckerReady() && !S.readonly);
   const t=Array.isArray(p.theme)&&p.theme.length===2&&p.theme.every(c=>HEX6.test(c)) ? p.theme : [HEX6.test(p.fur||"")?p.fur:"#7a5230","#efecfa"];
   const toggle=(id,on,label,sub)=>`<label class="set-toggle"><span><b>${label}</b><small>${sub}</small></span><input type="checkbox" id="${id}" ${on?"checked":""}><i aria-hidden="true"></i></label>`;
   const row=(kind,label,m)=>`<div class="set-row"><span><b>${label}</b><small>${m?(m.gif?"Animated GIF":"Custom picture"):kind==="avatar"?"Showing your gorilla":"Showing your profile colors"}</small></span>
@@ -3276,7 +3639,7 @@ function mediaSettingsHTML(p){
   </div>
   <input type="file" id="mpFile" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
   <p class="note" style="text-align:left;margin:0">${canUp
-    ? "🛡 A safety bot checks every picture before anyone sees it. Nothing rude, scary, violent or grown-up, no photos of other people without asking, and never personal info like your address or school. GIFs can be animated. Max 8 MB."
+    ? (ON_SITE() ? "🛡 A safety checker looks at every picture before anyone sees it. Nothing rude, scary, violent or grown-up, no photos of other people without asking, and never personal info like your address or school. Animated GIFs up to 480 KB stay animated." : "🛡 A safety bot checks every picture before anyone sees it. Nothing rude, scary, violent or grown-up, no photos of other people without asking, and never personal info like your address or school. GIFs can be animated. Max 8 MB.")
     : S.readonly ? "You can't change pictures right now." : "Custom pictures need the safety checker, which isn't available here. Your gorilla still works great!"}</p>`;
 }
 function wireMediaSettings(){
@@ -3317,8 +3680,9 @@ function cropTo(src, W, H, type, q){
   return new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej(new Error("encode")), type, q));
 }
 async function checkPicture(images, kind){
+  if(!S.sample) return nsfwCheck(images);
   const many=images.length>1;
-  const prompt=`You are the safety checker for Gorilla Yapps, a chat app where many players are kids, some under 13. A player wants to use the attached image${many?"s (frames from ONE animated picture; judge them all)":""} as their profile ${kind==="avatar"?"picture":"banner"}.
+  const prompt=`You are the safety checker for Gorilla Yapps, a chat app where many players are kids, some under 13. A player wants to use the attached image${many?"s (frames from ONE animated picture; judge them all)":""} as ${kind==="avatar"?"their profile picture":kind==="banner"?"their profile banner":"a picture in a chat message"}.
 Say NOT OK if anything shows: nudity, underwear or swimsuit focus, sexual or suggestive content; blood, gore, injuries or violence; weapons pointed at people; hate symbols, slurs or rude gestures; drugs, alcohol, smoking or vaping; swear words or mean text; scary or disturbing horror images; personal information such as a home address, phone number, school name, license plate or ID card; a screenshot of someone's private messages.
 Say OK for cartoons, game characters and screenshots, animals, scenery, food, art, clean memes, logos and ordinary photos.
 Reply with only JSON: {"ok": true} or {"ok": false, "reason": "<short friendly reason a kid understands, at most 12 words>"}`;
@@ -3337,7 +3701,7 @@ Reply with only JSON: {"ok": true} or {"ok": false, "reason": "<short friendly r
   }
 }
 async function handleMedia(file, kind, say){
-  if(!S.assets || !S.sample){ say("Pictures can't be uploaded here.","bad"); return; }
+  if(!S.assets || !picCheckerReady()){ say("Pictures can't be uploaded here.","bad"); return; }
   if(!/^image\/(png|jpeg|gif|webp)$/.test(file.type)){ say("Pick a PNG, JPG, GIF or WebP picture.","bad"); return; }
   if(file.size>8*1024*1024){ say("That picture is over 8 MB. Try a smaller one.","bad"); return; }
   if(S.mediaBusy) return; S.mediaBusy=true;
@@ -3347,7 +3711,7 @@ async function handleMedia(file, kind, say){
     let dec;
     try{ dec=await decodeFrames(file); }catch(e){ say("That picture couldn't be opened. Try another one.","bad"); return; }
     frames.push(...dec.frames);
-    const lim=await S.sample.limits().catch(()=>null);
+    const lim=S.sample ? await S.sample.limits().catch(()=>null) : {images:{maxCount:4}};
     if(!lim || !lim.images){ say("The safety checker can't look at pictures here, so uploads are off.","bad"); return; }
     const big=kind==="avatar"?[512,512]:[1024,342], small=kind==="avatar"?[256,256]:[960,320];
     const checks=[];
@@ -3361,8 +3725,8 @@ async function handleMedia(file, kind, say){
     const upStill=await S.assets.upload(new File([still], kind+".webp", {type:"image/webp"}));
     let main=upStill.id, gif=false, note="";
     if(dec.animated && dec.checkedAll){
-      if(file.size<=6*1024*1024){ const r=await S.assets.upload(file); main=r.id; gif=true; }
-      else note=" It's too big to animate (over 6 MB), so it shows as a still picture.";
+      if(file.size<=MAX_GIF()){ const r=await S.assets.upload(file); main=r.id; gif=true; }
+      else note=` It's too big to animate (over ${ON_SITE()?"480 KB":"6 MB"}), so it shows as a still picture.`;
     } else if(file.type==="image/gif" && !dec.checkedAll) note=" Animated pictures need Chrome or Edge to check, so it shows as a still picture.";
     const val={id:main, still:upStill.id, gif, anim:gif, ts:Date.now()};
     await api.updateProfile({[kind]:val});
@@ -3690,8 +4054,9 @@ function openPopout(uid, anchor){
         S.blocks.has(uid)?`<p class="note">You blocked this gorilla.</p>`:
         p.dmOff?`<p class="note">${esc(p.display||p.name)} isn't accepting DMs.</p>`:
         `<form id="poDM" class="po-dm"><input id="poDMInput" maxlength="600" placeholder="Message @${esc(p.name)}" aria-label="Message ${esc(p.display||p.name)}" autocomplete="off"></form>`}
+      ${(()=>{ const cm=curMap(), tags=cm&&cm.docId&&p.srvTags&&Array.isArray(p.srvTags[cm.docId])?p.srvTags[cm.docId].filter(t=>cm.welcome&&cm.welcome.tags.includes(t)):[]; return tags.length?`<div class="po-sec"><h4>In ${esc(cm.name)}</h4><div class="po-roles">${tags.map(t=>`<span class="role-chip on" style="--rc:${esc(cm.color)}">${esc(t)}</span>`).join("")}</div></div>`:""; })()}
       ${popoutExtras(uid)}
-      <div class="po-actions">${me?"":`<button class="btn" id="poFriend">${S.friends.has(uid)?"★ Friend":"☆ Add friend"}</button>`}<button class="btn" id="poFull">View full profile</button></div>
+      <div class="po-actions">${me?"":`<button class="btn" id="poFriend">${friendBtnLabel(uid)}</button>${friendState(uid)==="incoming"?`<button class="btn" id="poDecline">✕ Decline</button>`:""}`}<button class="btn" id="poFull">View full profile</button></div>
     </div>`;
   pop.hidden=false;
   const r=anchor.getBoundingClientRect(), w=pop.offsetWidth, h=pop.offsetHeight;
@@ -3701,7 +4066,8 @@ function openPopout(uid, anchor){
   pop.style.top=Math.round(Math.max(8,Math.min(innerHeight-h-8, r.top-20)))+"px";
   if($("poEdit")) $("poEdit").onclick=()=>{ pop.hidden=true; openUserSettings("profile"); };
   if($("poFull")) $("poFull").onclick=()=>{ pop.hidden=true; openProfile(uid); };
-  if($("poFriend")) $("poFriend").onclick=()=>{ toggleFriend(uid); openPopout(uid,anchor); };
+  if($("poFriend")) $("poFriend").onclick=async()=>{ await toggleFriend(uid); openPopout(uid,anchor); };
+  if($("poDecline")) $("poDecline").onclick=async()=>{ await declineFriend(uid); openPopout(uid,anchor); };
   if($("poTimeout")) $("poTimeout").onclick=()=>{ pop.hidden=true; openTimeoutMenu(uid); };
   pop.querySelectorAll("[data-proletog]").forEach(b=>b.onclick=async()=>{
     const rid=b.dataset.proletog, next=JSON.parse(JSON.stringify(S.roles||{list:[],members:{}}));
@@ -3897,11 +4263,13 @@ function openUserSettings(tab){
     case "appearance": body=`<h2>Appearance</h2><div class="set-group">
       <div class="set-row"><span><b>Theme</b><small>Pastel day sky or dark night jungle</small></span><div class="seg"><button type="button" data-skypick="day" aria-pressed="${local.sky!=="night"}">☀️ Day</button><button type="button" data-skypick="night" aria-pressed="${local.sky==="night"}">🌙 Night</button></div></div>
       ${toggle("setCompact",local.compact,"Compact messages","Fit more messages on screen")}
-      <label class="set-slider"><b>Text size</b><input type="range" id="setFont" min="13" max="19" step="1" value="${+local.font||15}"><small id="setFontVal">${+local.font||15}px</small></label></div>`; break;
+      <label class="set-slider"><b>Text size</b><input type="range" id="setFont" min="13" max="19" step="1" value="${+local.font||15}"><small id="setFontVal">${+local.font||15}px</small></label></div>
+      ${ON_SITE()?`<h3 class="set-h">📲 App</h3><div class="set-group"><div class="set-row"><span><b>Install Gorilla Yapps</b><small>${installText()}</small></span>${S.installEvt?`<button type="button" class="btn primary" id="setInstall">Install</button>`:""}</div></div>`:""}`; break;
     case "notifications": body=`<h2>Notifications</h2><div class="set-group">
       ${toggle("setMute",!local.mute,"Mention sounds","Play an ook when someone @mentions you")}
       ${toggle("setFlash",!local.noFlash,"TAGGED! flash","Show the lava flash when you get mentioned")}
       ${toggle("setDmSound",!local.dmMute,"DM sounds","Play a sound for new direct messages")}
+      ${("Notification" in window)?toggle("setDesk",!!local.desktopNotif&&Notification.permission==="granted","Pop-up notifications","Show a notification for DMs and @mentions when Gorilla Yapps is in another tab"):""}
       </div><p class="note" style="text-align:left">Do Not Disturb status turns off sounds and flashes. You can also mute single channels with the 🔕 button at the top of a channel.</p>`; break;
     case "privacy": { const bl=[...S.blocks]; body=`<h2>Privacy &amp; Safety</h2><div class="set-group">
       ${toggle("setDms",!p.dmOff,"Allow direct messages","Let other gorillas DM you")}
@@ -3946,6 +4314,11 @@ function openUserSettings(tab){
   on("setMute",e=>{ local.mute=!e.target.checked; saveLocal(); renderMe(); });
   on("setFlash",e=>{ local.noFlash=!e.target.checked; saveLocal(); });
   on("setDmSound",e=>{ local.dmMute=!e.target.checked; saveLocal(); });
+  if($("setInstall")) $("setInstall").onclick=async()=>{ const ev=S.installEvt; if(!ev) return; S.installEvt=null; try{ ev.prompt(); const r=await ev.userChoice; if(r&&r.outcome==="accepted") toast("Installed! Find Gorilla Yapps on your home screen 🦍"); }catch(e){} openUserSettings("appearance"); };
+  on("setDesk",async e=>{ if(!e.target.checked){ local.desktopNotif=false; saveLocal(); return; }
+    let p="denied"; try{ p=await Notification.requestPermission(); }catch(err){}
+    if(p==="granted"){ local.desktopNotif=true; saveLocal(); toast("Notifications are on 🔔"); }
+    else { e.target.checked=false; local.desktopNotif=false; saveLocal(); toast("Your browser blocked notifications. You can allow them in the site settings next to the address bar."); } });
   if(S.setTab==="roles") wireRolesTab();
   if(S.setTab==="mod") wireModTab();
   S._lastTab=S.setTab;
@@ -3980,11 +4353,11 @@ function openProfile(uid){
       <div><div class="pc-name">${esc(p.name)}${uid===S.uid?' <span class="you-tag">YOU</span>':""}</div>${ownerTag(uid)?`<div style="margin-top:6px">${ownerTag(uid)}</div>`:""}<div class="note" style="text-align:left;display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="sdot ${on?statusMap().get(uid):"invisible"}"></span>${on?ST_LABEL[statusMap().get(uid)]:"Offline"}${p.status?" · "+esc(censor(p.status)):""}</div></div>
       <div class="pc-stats"><div><b>${lv}</b><small>Level</small></div><div><b>${p.bananas||0}</b><small>Bananas</small></div><div><b>${p.joined?new Date(p.joined).toLocaleDateString([],{month:"short",year:"numeric"}):"—"}</b><small>Joined</small></div></div>
       ${p.bio?`<div class="pc-bio">${esc(censor(p.bio))}</div>`:""}
-      <div class="row">${uid===S.uid?`<button class="btn primary" id="pcEdit">Edit profile</button>`:`<button class="btn primary" id="pcDM">💬 Message</button><button class="btn" id="pcMention">Mention</button><button class="btn" id="pcFriend">${S.friends.has(uid)?"★ Remove friend":"☆ Add friend"}</button><button class="danger-btn" id="pcBlock">${S.blocks.has(uid)?"Unblock":"🚫 Block"}</button>${(p.avatar||p.banner)?`<button class="btn" id="pcReportPic">🚩 Report picture</button>`:""}${S.isOwner&&(p.avatar||p.banner)?`<button class="danger-btn" id="pcRmPic">Remove picture</button>`:""}${S.isOwner?`<button class="danger-btn" id="pcBan">${S.siteBans.has(uid)?"Unban from Gorilla Yapps":"⛔ Ban from Gorilla Yapps"}</button>`:""}`}</div>
+      <div class="row">${uid===S.uid?`<button class="btn primary" id="pcEdit">Edit profile</button>`:`<button class="btn primary" id="pcDM">💬 Message</button><button class="btn" id="pcMention">Mention</button><button class="btn" id="pcFriend">${friendState(uid)==="friend"?"★ Remove friend":friendBtnLabel(uid)}</button><button class="danger-btn" id="pcBlock">${S.blocks.has(uid)?"Unblock":"🚫 Block"}</button>${(p.avatar||p.banner)?`<button class="btn" id="pcReportPic">🚩 Report picture</button>`:""}${S.isOwner&&(p.avatar||p.banner)?`<button class="danger-btn" id="pcRmPic">Remove picture</button>`:""}${S.isOwner?`<button class="danger-btn" id="pcBan">${S.siteBans.has(uid)?"Unban from Gorilla Yapps":"⛔ Ban from Gorilla Yapps"}</button>`:""}`}</div>
     </div></div>`);
   if($("pcEdit")) $("pcEdit").onclick=openSettings;
   if($("pcDM")) $("pcDM").onclick=()=>{ closeModal(); openDM(uid); };
-  if($("pcFriend")) $("pcFriend").onclick=()=>{ toggleFriend(uid); openProfile(uid); };
+  if($("pcFriend")) $("pcFriend").onclick=async()=>{ await toggleFriend(uid); openProfile(uid); };
   if($("pcBlock")) $("pcBlock").onclick=()=>{ toggleBlock(uid); openProfile(uid); };
   if($("pcReportPic")) $("pcReportPic").onclick=()=>openReport({id:"profile", uid, k:"profile", text:"[profile picture or banner]"});
   if($("pcRmPic")) $("pcRmPic").onclick=async()=>{ const b=$("pcRmPic"); if(b.dataset.armed!=="1"){ b.dataset.armed="1"; b.textContent="Tap again to remove"; return; } if(await removePics(uid)){ toast("Removed "+p.name+"'s picture and banner"); openProfile(uid); } };
@@ -4046,7 +4419,8 @@ function openCreateServer(){
 function openServerSettings(){
   const m=curMap(); if(m.builtin || m.home) return;
   const raw=(S.allServersRaw||[]).find(x=>"s-"+x.docId===m.id)||{};
-  const d={name:m.name, desc:m.desc||"", icon:m.short, color:m.color, chans:m.chans.map(c=>({...c})), bans:[...(m.bans||[])], newId:"", newTopic:"", banPick:"", priv:!!raw.private, code:raw.code||newCode(), members:[...(raw.members||[])]};
+  const w=raw.welcome||{};
+  const d={wOn:!!w.on, wMsg:String(w.msg||""), wRules:String(w.rules||""), wTags:(Array.isArray(w.tags)?w.tags:[]).join(", "), name:m.name, desc:m.desc||"", icon:m.short, color:m.color, chans:m.chans.map(c=>({...c})), bans:[...(m.bans||[])], newId:"", newTopic:"", banPick:"", priv:!!raw.private, code:raw.code||newCode(), members:[...(raw.members||[])]};
   const draw=()=>{
     const others=Object.keys(S.profiles).filter(u=>u!==S.uid && u!==m.owner && !d.bans.includes(u)).sort((a,b)=>prof(a).name.localeCompare(prof(b).name));
     openModal(`<div class="card" role="dialog" aria-modal="true" aria-labelledby="ssTitle">
@@ -4065,6 +4439,12 @@ function openServerSettings(){
           ${d.priv?`<div class="invite-code small"><code>${esc(d.code)}</code><button type="button" class="btn" id="ssNewCode">🔄 New code</button></div>
           <div class="ss-list">${d.members.filter(u=>u!==m.owner).map(u=>`<div class="ss-chan"><span class="av xs">${av(prof(u))}</span><b>${esc(dn(u))}</b><button type="button" class="danger-btn" data-kick="${esc(u)}">Kick</button></div>`).join("")||`<small class="note" style="text-align:left">No members yet besides you. Share the code!</small>`}</div>`:""}
         </div>
+        <div class="field"><span class="lbl">👋 Welcome screen</span>
+          <label class="set-toggle" style="border:2px solid var(--vine);border-radius:12px"><span><b>Show a welcome screen</b><small>New members see your message and rules, then pick their roles</small></span><input type="checkbox" id="ssWOn" ${d.wOn?"checked":""}><i aria-hidden="true"></i></label>
+          ${d.wOn?`<textarea id="ssWMsg" rows="2" maxlength="300" placeholder="Welcome to the troop! Say hi in #general." class="ss-ta">${esc(d.wMsg)}</textarea>
+          <textarea id="ssWRules" rows="3" maxlength="600" placeholder="Server rules, one per line" class="ss-ta">${esc(d.wRules)}</textarea>
+          <input id="ssWTags" maxlength="200" placeholder="Roles people can pick, like: Infection player, Casual, Speedrunner" value="${esc(d.wTags)}" class="ss-ta">`:""}
+        </div>
         <div class="field"><span class="lbl">Banned gorillas · they can't see this server</span>
           ${d.bans.length?`<div class="ss-list">${d.bans.map(u=>`<div class="ss-chan"><span class="av xs">${av(prof(u))}</span><b>${esc(prof(u).name)}</b><button type="button" class="btn" data-unban="${esc(u)}">Unban</button></div>`).join("")}</div>`:`<small class="note" style="text-align:left">Nobody is banned.</small>`}
           ${others.length?`<div class="ss-chan add"><select id="ssBanPick" aria-label="Pick a gorilla to ban"><option value="">Pick a gorilla…</option>${others.map(u=>`<option value="${esc(u)}" ${d.banPick===u?"selected":""}>${esc(prof(u).name)}</option>`).join("")}</select><button type="button" class="danger-btn" id="ssBan">Ban</button></div>`:""}
@@ -4080,6 +4460,10 @@ function openServerSettings(){
     $("ssNewTopic").oninput=e=>d.newTopic=e.target.value;
     if($("ssBanPick")) $("ssBanPick").onchange=e=>d.banPick=e.target.value;
     if($("ssPriv")) $("ssPriv").onchange=e=>{ d.priv=e.target.checked; draw(); };
+    if($("ssWOn")) $("ssWOn").onchange=e=>{ d.wOn=e.target.checked; draw(); };
+    if($("ssWMsg")) $("ssWMsg").oninput=e=>d.wMsg=e.target.value;
+    if($("ssWRules")) $("ssWRules").oninput=e=>d.wRules=e.target.value;
+    if($("ssWTags")) $("ssWTags").oninput=e=>d.wTags=e.target.value;
     f.querySelectorAll("[data-topic]").forEach(inp=>inp.oninput=()=>d.chans[+inp.dataset.topic].topic=inp.value);
     f.onclick=e=>{
       const t=e.target;
@@ -4103,10 +4487,12 @@ function openServerSettings(){
       e.preventDefault();
       const name=d.name.trim();
       if(name.length<2){ $("ssErr").textContent="Server names need at least 2 characters."; return; }
+      const wTags=d.wTags.split(",").map(t=>t.trim().slice(0,20)).filter(Boolean).slice(0,8);
+      if(hasBad(d.wMsg)||hasBad(d.wRules)||wTags.some(hasBad)){ $("ssErr").textContent="The welcome screen has a word we don't allow."; return; }
       if(hasBad(name)||hasBad(d.desc)||d.chans.some(c=>hasBad(c.id)||hasBad(c.topic))){ $("ssErr").textContent="Something here has a word we don't allow."; return; }
       $("ssSave").disabled=true;
       try{
-        await api.updateServer(m.docId,{name, desc:d.desc.trim(), icon:d.icon, color:d.color, chans:d.chans.map(c=>({id:c.id,topic:c.topic.trim(),ann:!!c.ann})), bans:d.bans, private:d.priv, code:d.code, members:d.members.filter(u=>!d.bans.includes(u))});
+        await api.updateServer(m.docId,{welcome:{on:d.wOn, msg:d.wMsg.trim().slice(0,300), rules:d.wRules.trim().slice(0,600), tags:d.wTags.split(",").map(t=>t.trim().slice(0,20)).filter(Boolean).slice(0,8)}, name, desc:d.desc.trim(), icon:d.icon, color:d.color, chans:d.chans.map(c=>({id:c.id,topic:c.topic.trim(),ann:!!c.ann})), bans:d.bans, private:d.priv, code:d.code, members:d.members.filter(u=>!d.bans.includes(u))});
         closeModal(); toast("Server settings saved");
         if(!d.chans.some(c=>c.id===S.chan)){ S.chan=d.chans[0].id; setTimeout(switchTo,300); }
       }catch(err){ $("ssErr").textContent="Couldn't save. Try again."; $("ssSave").disabled=false; }
@@ -4438,6 +4824,7 @@ $("chans").addEventListener("click",e=>{
   const lv=e.target.closest("[data-leave]");
   if(lv){ e.stopPropagation(); local.rooms=(local.rooms||[]).filter(c=>c!==lv.dataset.leave); saveLocal(); syncWatchers(); toast("Left room "+lv.dataset.leave);
     if(S.mapId==="room"){ if(local.rooms.length){ S.chan=local.rooms[0]; } else { S.mapId="forest"; S.chan="general"; } switchTo(); } else renderAll(); return; }
+  if(e.target.closest("[data-friendshome]")){ S.mapId="home"; S.chan=""; S.friendTab=S.friendTab||"online"; switchTo(); if(innerWidth<=720) $("app").classList.remove("open"); return; }
   const dm=e.target.closest("[data-dm]");
   if(dm){ openDM(dm.dataset.dm); return; }
   const c=e.target.closest("[data-chan]"), v=e.target.closest("[data-vc]");
@@ -4502,7 +4889,11 @@ document.addEventListener("click",e=>{
 });
 $("searchBtn").onclick=()=>{ const bar=$("searchbar"); bar.hidden=!bar.hidden; $("searchBtn").setAttribute("aria-pressed",!bar.hidden); if(!bar.hidden) $("searchInput").focus(); else { S.search=""; $("searchInput").value=""; renderFeed(); } };
 $("searchClose").onclick=()=>$("searchBtn").click();
-$("searchInput").oninput=e=>{ S.search=e.target.value; renderFeed(); };
+$("searchInput").oninput=e=>{ S.search=e.target.value; if(S.searchScope && S.searchScope!=="chan") queueGlobalSearch(); else renderFeed(); };
+$("searchbar").addEventListener("click",e=>{ const b=e.target.closest("[data-sscope]"); if(!b) return; S.searchScope=b.dataset.sscope;
+  $("searchbar").querySelectorAll("[data-sscope]").forEach(x=>x.setAttribute("aria-pressed",x===b));
+  $("searchInput").placeholder=S.searchScope==="server"?"Search all of "+(curMap().home?"your DMs":curMap().name):S.searchScope==="dms"?"Search all your DMs":"Search this channel";
+  S.gs=null; if(S.searchScope==="chan") renderFeed(); else queueGlobalSearch(); $("searchInput").focus(); });
 document.addEventListener("click",e=>{ const sp=e.target.closest && e.target.closest(".spoiler:not(.shown)"); if(sp){ e.preventDefault(); e.stopPropagation(); sp.classList.add("shown"); } }, true);
 document.addEventListener("keydown",e=>{ if(e.key==="Enter" && e.target.classList && e.target.classList.contains("spoiler")) e.target.classList.add("shown"); });
 /* drag a picture onto the chat to send it */

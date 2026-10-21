@@ -286,6 +286,7 @@ async function readable(ctx, path, data) {
       return (await canReadChannel(ctx, k)) ? data : null;
     }
     case "dmidx": return seg[1] === ctx.uid ? data : null;
+    case "freq": return seg[1] === ctx.uid ? data : null;
     case "reports": return (seg[1] === ctx.uid || await ctx.isOwner()) ? data : null;
     case "data": return seg[2] === ctx.uid ? data : null;
     default: return null;
@@ -380,6 +381,11 @@ async function checkWrite(ctx, op, path, before, incoming) {
         if (typeof m !== "object" || !/^[0-9a-f]{32}$/.test(m.id || "") || (m.still && !/^[0-9a-f]{32}$/.test(m.still))) deny("That picture isn't valid.");
         after[k] = { id: m.id, still: m.still || m.id, gif: !!m.gif, anim: !!m.anim, ts: +m.ts || Date.now() };
       }
+      if (after && after.srvTags != null) {
+        const o = {};
+        if (after.srvTags && typeof after.srvTags === "object") Object.entries(after.srvTags).slice(0, 40).forEach(([k, v]) => { if (/^[A-Za-z0-9_-]{1,80}$/.test(k) && Array.isArray(v)) o[k] = v.map(t => str(t, 20)).filter(Boolean).slice(0, 8); });
+        after.srvTags = o;
+      }
       if (after && after.theme != null && !(Array.isArray(after.theme) && after.theme.length === 2 && after.theme.every(c => /^#[0-9a-f]{6}$/i.test(c)))) delete after.theme;
       if (after) {
         if (!NAME_RE.test(after.name || "")) deny("Usernames need 3 to 16 letters, numbers or underscores.");
@@ -407,6 +413,8 @@ async function checkWrite(ctx, op, path, before, incoming) {
         if (a.has(uid) || !b.has(uid) || a.size !== b.size - 1) deny("You can only leave a server here. Use an invite code to join.");
       }
       if (after) {
+        const w = after.welcome;
+        after.welcome = w && typeof w === "object" ? { on: !!w.on, msg: censor(str(w.msg, 300)), rules: censor(str(w.rules, 600)), tags: (Array.isArray(w.tags) ? w.tags : []).map(t => str(t, 20).trim()).filter(t => t && !hasBad(t)).slice(0, 8) } : null;
         after.name = str(after.name, 32); after.desc = censor(str(after.desc, 120));
         after.chans = (Array.isArray(after.chans) ? after.chans : []).slice(0, 20).map(c => ({ id: str(c.id, 24).toLowerCase().replace(/[^a-z0-9-]/g, "-"), topic: censor(str(c.topic, 120)), ann: !!c.ann })).filter(c => c.id.length >= 2);
         if (!after.chans.length) deny("A server needs at least one channel.");
@@ -490,6 +498,20 @@ async function checkWrite(ctx, op, path, before, incoming) {
       break;
     }
     case "last": return { skip: true }; // the server keeps these itself
+    case "freq": { // friend request boxes: freq/<to> = {items: {<from>: time | "ok" | "rm"}}
+      if (seg.length !== 2 || op === "delete" && seg[1] !== uid) deny();
+      const okVal = v => typeof v === "number" || v === "ok" || v === "rm";
+      const clean = items => { const o = {}; Object.entries(items && typeof items === "object" ? items : {}).slice(0, 300).forEach(([k, v]) => { if (/^[A-Za-z0-9_-]{1,80}$/.test(k) && okVal(v)) o[k] = v; }); return o; };
+      if (seg[1] === uid) { if (after) after = { items: clean(after.items) }; break; }
+      // someone else's box: only my own entry changes, merged in on the server (I can't read their box)
+      const blocks = await ctx.doc("data/users/" + seg[1] + "/blocks");
+      if (blocks && (blocks.ids || []).includes(uid)) return { skip: true };
+      const mine = incoming && incoming.items ? incoming.items[uid] : undefined;
+      if (mine != null && !okVal(mine)) deny();
+      const items = clean(before && before.items);
+      if (mine == null) delete items[uid]; else items[uid] = typeof mine === "number" ? Date.now() : mine;
+      return { after: { items }, extra };
+    }
     case "dmidx": {
       if (seg[1] !== uid) return { skip: true };
       if (after) { const peers = {}; for (const [k, v] of Object.entries(after.peers || {})) if (typeof v === "number") peers[str(k, 80)] = v; after = { peers }; }
@@ -743,7 +765,7 @@ H.sync = api(async (body, auth) => {
     const [n] = await pipe([["INCR", "rl:ev:" + uid], ["EXPIRE", "rl:ev:" + uid, 60, "NX"]]);
     if (n > 120) throw new Fail(429, "slow_down", "Too many events. Slow down a little.");
     for (const e of emits) {
-      const json = JSON.stringify({ topic: String(e.topic || "").slice(0, 30), data: e.data === undefined ? null : e.data, by: uid, peer: conn, t: now });
+      const json = JSON.stringify({ topic: String(e.topic || "").slice(0, 30), data: e.data === undefined ? null : e.data, by: uid, peer: conn, t: now, eid: typeof e.eid === "string" ? e.eid.slice(0, 24) : undefined });
       if (json.length > 4000) continue;
       pairs.push("ev", json);
     }

@@ -1,0 +1,15 @@
+{
+  "name": "Gorilla Yapps",
+  "short_name": "Gorilla Yapps",
+  "description": "A fan-made jungle chat hangout with servers, DMs and voice rooms.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#cbe6ff",
+  "theme_color": "#3f9a4a",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
