@@ -189,13 +189,535 @@ function totpOk(secret, code) {
 }
 const totpAt = at;
 
+/* ===== lib/push.js ===== */
+// Phone and computer notifications (Web Push), built on Node's own crypto: no extra packages.
+// The server makes its own key pair the first time and keeps it in the database.
+
+const pushB64 = buf => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const pushUnb64 = s => Buffer.from(String(s).replace(/-/g, "+").replace(/_/g, "/"), "base64");
+const pushHmac = (key, data) => crypto.createHmac("sha256", key).update(data).digest();
+
+// Only real push services, so nobody can make the server send requests to other places.
+const PUSH_HOSTS = [/^fcm\.googleapis\.com$/, /^android\.googleapis\.com$/, /(^|\.)push\.services\.mozilla\.com$/, /(^|\.)notify\.windows\.com$/, /^web\.push\.apple\.com$/, /(^|\.)push\.apple\.com$/];
+function pushEndpointOk(u) {
+  const t = process.env.GY_PUSH_TEST; if (t && typeof u === "string" && u.startsWith(t)) return true; // local tests only
+  try { const x = new URL(u); return x.protocol === "https:" && !x.port && PUSH_HOSTS.some(r => r.test(x.hostname)); } catch (e) { return false; }
+}
+function cleanPushSubs(list) {
+  return (Array.isArray(list) ? list : []).filter(s => s && typeof s === "object").map(s => ({
+    endpoint: String(s.endpoint || "").slice(0, 600),
+    keys: { p256dh: String((s.keys && s.keys.p256dh) || "").slice(0, 120), auth: String((s.keys && s.keys.auth) || "").slice(0, 40) },
+    ts: +s.ts || Date.now()
+  })).filter(s => pushEndpointOk(s.endpoint) && /^[A-Za-z0-9_-]{80,100}$/.test(s.keys.p256dh) && /^[A-Za-z0-9_-]{16,30}$/.test(s.keys.auth)).slice(-6);
+}
+
+let vapidCache = null;
+async function vapidKeys() {
+  if (vapidCache) return vapidCache;
+  let v = null;
+  try { v = JSON.parse((await cmd("GET", "vapid:v1")) || "null"); } catch (e) {}
+  if (!v || !v.d) {
+    const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const jwk = privateKey.export({ format: "jwk" });
+    const fresh = { x: jwk.x, y: jwk.y, d: jwk.d };
+    await cmd("SET", "vapid:v1", JSON.stringify(fresh), "NX");
+    v = JSON.parse(await cmd("GET", "vapid:v1"));
+  }
+  vapidCache = { jwk: { kty: "EC", crv: "P-256", x: v.x, y: v.y, d: v.d }, pub: pushB64(Buffer.concat([Buffer.from([4]), pushUnb64(v.x), pushUnb64(v.y)])) };
+  return vapidCache;
+}
+
+// RFC 8291 message encryption (aes128gcm). `fixed` is only used by the tests.
+function encryptPush(payload, p256dh, authSecret, fixed) {
+  const uaPub = pushUnb64(p256dh), auth = pushUnb64(authSecret);
+  const ecdh = crypto.createECDH("prime256v1");
+  if (fixed && fixed.asPrivate) ecdh.setPrivateKey(pushUnb64(fixed.asPrivate)); else ecdh.generateKeys();
+  const asPub = ecdh.getPublicKey();
+  const secret = ecdh.computeSecret(uaPub);
+  const salt = fixed && fixed.salt ? pushUnb64(fixed.salt) : crypto.randomBytes(16);
+  const prkKey = pushHmac(auth, secret);
+  const ikm = pushHmac(prkKey, Buffer.concat([Buffer.from("WebPush: info\0"), uaPub, asPub, Buffer.from([1])]));
+  const prk = pushHmac(salt, ikm);
+  const cek = pushHmac(prk, Buffer.concat([Buffer.from("Content-Encoding: aes128gcm\0"), Buffer.from([1])])).subarray(0, 16);
+  const nonce = pushHmac(prk, Buffer.concat([Buffer.from("Content-Encoding: nonce\0"), Buffer.from([1])])).subarray(0, 12);
+  const c = crypto.createCipheriv("aes-128-gcm", cek, nonce);
+  const body = Buffer.concat([c.update(Buffer.concat([Buffer.from(payload), Buffer.from([2])])), c.final(), c.getAuthTag()]);
+  const rs = Buffer.alloc(4); rs.writeUInt32BE(4096);
+  return Buffer.concat([salt, rs, Buffer.from([asPub.length]), asPub, body]);
+}
+
+function vapidHeader(endpoint, keys, subject) {
+  const aud = new URL(endpoint).origin;
+  const head = pushB64(JSON.stringify({ typ: "JWT", alg: "ES256" }));
+  const claims = pushB64(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: subject }));
+  const key = crypto.createPrivateKey({ key: keys.jwk, format: "jwk" });
+  const sig = crypto.sign("sha256", Buffer.from(head + "." + claims), { key, dsaEncoding: "ieee-p1363" });
+  return "vapid t=" + head + "." + claims + "." + pushB64(sig) + ", k=" + keys.pub;
+}
+
+async function sendOne(sub, payload, keys, subject) {
+  const body = encryptPush(JSON.stringify(payload), sub.keys.p256dh, sub.keys.auth);
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 3500);
+  try {
+    const r = await fetch(sub.endpoint, { method: "POST", signal: ctl.signal, headers: {
+      TTL: "86400", Urgency: "high", Topic: String(payload.tag || "gy").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || "gy",
+      "Content-Encoding": "aes128gcm", "Content-Type": "application/octet-stream", Authorization: vapidHeader(sub.endpoint, keys, subject)
+    }, body });
+    return r.status;
+  } catch (e) { return 0; } finally { clearTimeout(t); }
+}
+
+// Sends one notification to each person (all of their devices). Devices that are gone get removed.
+async function sendPushes(list, subject) {
+  if (!list || !list.length) return;
+  const byUid = new Map();
+  for (const p of list.slice(0, 12)) if (p.uid && !byUid.has(p.uid)) byUid.set(p.uid, p.payload);
+  const uids = [...byUid.keys()];
+  const docs = await getDocs(uids.map(u => "data/users/" + u + "/push"));
+  const jobs = [], dead = [];
+  let keys = null;
+  for (let i = 0; i < uids.length; i++) {
+    const subs = cleanPushSubs(docs[i] && docs[i].subs);
+    if (!subs.length) continue;
+    keys = keys || await vapidKeys();
+    for (const s of subs) jobs.push(sendOne(s, byUid.get(uids[i]), keys, subject).then(st => { if (st === 404 || st === 410) dead.push([i, s.endpoint]); }));
+  }
+  await Promise.allSettled(jobs);
+  if (dead.length) {
+    const writes = [];
+    uids.forEach((u, i) => { const gone = new Set(dead.filter(d => d[0] === i).map(d => d[1])); if (gone.size) writes.push({ path: "data/users/" + u + "/push", data: { subs: cleanPushSubs(docs[i].subs).filter(s => !gone.has(s.endpoint)) } }); });
+    try { await writeDocs(writes); } catch (e) {}
+  }
+}
+
+/* ===== lib/bots.js ===== */
+// Built-in helper bots (no AI: every answer comes from the lists and rules below).
+// This file runs on the server (website) AND is copied into the page for the Claude app version.
+const BOT_LIST = {
+  yapbot: { name: "YapBot", fur: "#5865f2", hat: "astronaut", face: "robot", tag: "Helper",
+    desc: "Rolls dice, flips coins, answers the magic 8-ball, picks for you and shows server and user info.",
+    cmds: [["!help", "See every bot command"], ["!ping", "Check that the bots are awake"], ["!roll", "Roll dice, like !roll 2d6"], ["!flip", "Flip a coin"], ["!8ball", "Ask a yes-or-no question"], ["!choose", "Pick one, like !choose pizza | tacos"], ["!server", "Info about this server"], ["!whois", "Info about someone, like !whois @name"]] },
+  funbot: { name: "FunBot", fur: "#ff6fb5", hat: "propeller", face: "silly", tag: "Games",
+    desc: "Jokes, animal facts, trivia with banana prizes, a lava monke tag game, hugs and compliments.",
+    cmds: [["!joke", "Tell a joke"], ["!fact", "A real animal fact"], ["!monke", "Wise words from a monke"], ["!trivia", "Start a trivia question (winner gets 5 🍌)"], ["!answer", "Answer the trivia, like !answer mars"], ["!rate", "Rate anything out of 10"], ["!hug", "Hug someone, like !hug @name"], ["!compliment", "Say something nice to someone"], ["!infection", "Start a lava monke tag game"], ["!run", "Join the tag game"], ["!tag", "Lava monkes tag people, like !tag @name"], ["!lava", "See who is lava"]] },
+  bananabot: { name: "BananaBot", fur: "#f0b232", hat: "chef", face: "happy", tag: "Economy",
+    desc: "Check bananas and levels, see the top 5, and give bananas to friends.",
+    cmds: [["!bananas", "How many bananas you (or @name) have"], ["!level", "Your level and XP"], ["!top", "Top 5 banana holders"], ["!give", "Give bananas, like !give @name 10"]] },
+  modbot: { name: "ModBot", fur: "#3f8fe6", hat: "viking", face: "cool", tag: "Safety",
+    desc: "Welcomes new members, warns people who spam, and lets mods give warnings.",
+    cmds: [["!rules", "Show the rules"], ["!report", "How to report someone"], ["!warn", "Mods only: !warn @name reason"]] }
+};
+/* ---------- more bots (server owners add them from Find bots) ---------- */
+Object.assign(BOT_LIST, {
+  gamebot: { name: "GameBot", fur: "#7e57c2", hat: "cap", face: "cool", tag: "Games", cat: "games",
+    desc: "Tic-tac-toe against a friend, rock paper scissors, and a number guessing game.",
+    cmds: [["!ttt", "Tic-tac-toe, like !ttt @name"], ["!move", "Your tic-tac-toe move, 1 to 9"], ["!rps", "Rock paper scissors, like !rps rock"], ["!guess", "Start a guess-the-number game"], ["!g", "Make a guess, like !g 42"]] },
+  wordbot: { name: "WordBot", fur: "#00897b", hat: "gradcap", face: "normal", tag: "Games", cat: "games",
+    desc: "Unscramble words for bananas, and flip text backwards.",
+    cmds: [["!scramble", "Get a scrambled word to solve (winner gets 3 🍌)"], ["!unscramble", "Answer the scramble, like !unscramble banana"], ["!reverse", "Flip your text backwards"]] },
+  mathbot: { name: "MathBot", fur: "#1e88e5", hat: "gradcap", face: "cool", tag: "Games", cat: "games",
+    desc: "Quick math races for bananas and a calculator.",
+    cmds: [["!math", "Start a math race (winner gets 3 🍌)"], ["!ans", "Answer the math race, like !ans 12"], ["!calc", "Do math, like !calc 12*4+2"]] },
+  petbot: { name: "PetBot", fur: "#8d6e63", hat: "flower", face: "happy", tag: "Fun", cat: "fun",
+    desc: "A baby monke the whole server takes care of. Feed it, play with it and give it a name.",
+    cmds: [["!pet", "See how the server's pet is doing"], ["!feed", "Feed the pet a banana"], ["!play", "Play with the pet"], ["!nap", "Put the pet down for a nap"], ["!petname", "Name the pet, like !petname Bongo"]] },
+  taghelper: { name: "TagHelper", fur: "#2e7d32", hat: "leafcrown", face: "happy", tag: "Gorilla Tag", cat: "gtag",
+    desc: "Picks random maps and modes, splits people into teams, and gives playing tips.",
+    cmds: [["!maps", "List the maps"], ["!modes", "List the game modes"], ["!randommap", "Pick a random map"], ["!randommode", "Pick a random mode"], ["!teams", "Split people into 2 teams, like !teams @a @b @c @d"], ["!tip", "A tip for playing"]] },
+  countbot: { name: "CountBot", fur: "#546e7a", hat: "beanie", face: "normal", tag: "Games", cat: "games",
+    desc: "Counting game: everyone counts up together, one number per message. Two in a row by the same person breaks it.",
+    cmds: [["!count", "See the current count"], ["!countreset", "Mods only: start the count over"]] },
+  hypebot: { name: "HypeBot", fur: "#ff7043", hat: "party", face: "starry", tag: "Fun", cat: "fun",
+    desc: "Hypes up your friends when they do something cool.",
+    cmds: [["!hype", "Hype someone up, like !hype @name"], ["!gg", "Say GG to someone, like !gg @name"], ["!cheer", "Cheer for the whole server"]] },
+  storybot: { name: "StoryBot", fur: "#ab47bc", hat: "wizard", face: "wink", tag: "Fun", cat: "fun",
+    desc: "Makes up a silly short story starring you or a friend.",
+    cmds: [["!story", "A silly story, like !story @name"]] },
+  riddlebot: { name: "RiddleBot", fur: "#5c6bc0", hat: "tophat", face: "normal", tag: "Games", cat: "games",
+    desc: "Riddles to solve for bananas.",
+    cmds: [["!riddle", "Get a riddle (solver gets 3 🍌)"], ["!solve", "Answer the riddle, like !solve a map"]] },
+  wyrbot: { name: "ChoiceBot", fur: "#26a69a", hat: "bandana", face: "silly", tag: "Fun", cat: "fun",
+    desc: "Would you rather and this-or-that questions to get chats going.",
+    cmds: [["!wyr", "A would you rather question"], ["!thisorthat", "A quick this or that"]] },
+  quotebot: { name: "QuoteBot", fur: "#78909c", hat: "pirate", face: "wink", tag: "Fun", cat: "fun",
+    desc: "Saves the funniest things people say in your server and brings them back.",
+    cmds: [["!addquote", "Save a quote, like !addquote ooga booga forever"], ["!quote", "A random saved quote"], ["!quotes", "How many quotes are saved"]] },
+  animalbot: { name: "AnimalBot", fur: "#6d4c41", hat: "mushroom", face: "happy", tag: "Fun", cat: "fun",
+    desc: "Animal facts, gorilla facts and animal sounds.",
+    cmds: [["!animal", "A fact about a random animal"], ["!gorilla", "A gorilla fact"], ["!sound", "Guess which animal makes this sound"]] }
+});
+for (const [id, cat] of [["yapbot", "helpers"], ["funbot", "fun"], ["bananabot", "economy"], ["modbot", "safety"]]) BOT_LIST[id].cat = cat;
+const BOT_CATS = [["helpers", "Helpers"], ["fun", "Fun"], ["games", "Games"], ["gtag", "Gorilla Tag"], ["economy", "Economy"], ["safety", "Safety"]];
+
+const SCRAMBLE_WORDS = ["banana", "gorilla", "jungle", "monkey", "forest", "canyon", "volcano", "treehouse", "infection", "climb", "branch", "jump", "troop", "friend", "chest", "lava", "beach", "cloud", "basement", "mountain", "rocket", "pirate", "castle", "pizza", "rainbow", "dragon", "planet", "puzzle", "tiger", "parrot", "penguin", "turtle", "shark", "dolphin", "spider", "coconut", "mango", "sunset", "thunder", "glacier"];
+const RIDDLES = [["What has keys but can't open locks?", ["a piano", "piano", "keyboard", "a keyboard"]], ["What gets wetter the more it dries?", ["a towel", "towel"]], ["What has hands but can't clap?", ["a clock", "clock"]], ["What has a head and a tail but no body?", ["a coin", "coin"]], ["What can you catch but not throw?", ["a cold", "cold"]], ["What goes up but never comes down?", ["your age", "age"]], ["What has many teeth but can't bite?", ["a comb", "comb"]], ["What has one eye but can't see?", ["a needle", "needle"]], ["What is full of holes but still holds water?", ["a sponge", "sponge"]], ["What can travel around the world while staying in a corner?", ["a stamp", "stamp"]], ["What belongs to you but other people use it more?", ["your name", "name"]], ["What has words but never speaks?", ["a book", "book"]], ["The more you take, the more you leave behind. What are they?", ["footsteps", "steps"]], ["What runs but never walks?", ["water", "a river", "river"]], ["What has a neck but no head?", ["a bottle", "bottle"]], ["What building has the most stories?", ["a library", "library"]]];
+const WYR = ["Would you rather be able to fly or be invisible?", "Would you rather live in a treehouse or a castle?", "Would you rather have a pet dragon or a pet dinosaur?", "Would you rather only eat bananas or never eat bananas again?", "Would you rather swim with dolphins or climb with gorillas?", "Would you rather be super fast or super strong?", "Would you rather explore space or the deep ocean?", "Would you rather always be 10 minutes early or 10 minutes late?", "Would you rather talk to animals or speak every language?", "Would you rather have no homework forever or no chores forever?", "Would you rather be a famous YouTuber or a famous athlete?", "Would you rather live where it's always summer or always winter?", "Would you rather have a jetpack or a time machine?", "Would you rather play only one game forever or never play the same game twice?"];
+const TOT = ["Pizza or tacos?", "Cats or dogs?", "Morning or night?", "Beach or mountains?", "Summer or winter?", "Infection or casual?", "Forest or canyon?", "Ice cream or cake?", "Books or movies?", "Phone or computer?", "Chocolate or vanilla?", "Sneakers or sandals?", "Space or ocean?", "Hot chocolate or lemonade?"];
+const HYPE = ["is absolutely cracked right now!", "just did something legendary!", "is the best monke in the troop!", "has the fastest arms in the jungle!", "can't be stopped!", "is built different!", "just made the whole troop proud!", "is on fire (not the lava kind)!"];
+const ANIMAL_FACTS = [["Octopuses", "have three hearts and blue blood."], ["Sloths", "can hold their breath longer than dolphins, up to 40 minutes."], ["Elephants", "can't jump, but they can swim well."], ["Owls", "can turn their heads about 270 degrees."], ["Kangaroos", "can't walk backwards easily."], ["Cows", "have best friends and get stressed when they're apart."], ["Sea otters", "hold hands while they sleep so they don't drift apart."], ["Penguins", "give pebbles to the penguin they like."], ["Butterflies", "taste with their feet."], ["Hummingbirds", "are the only birds that can fly backwards."], ["Koalas", "sleep up to 20 hours a day."], ["Giraffes", "have the same number of neck bones as people: seven."], ["Snails", "can sleep for a long time when it's too dry."], ["Dolphins", "have names for each other made of whistles."]];
+const GORILLA_FACTS = ["Gorillas are the largest primates in the world.", "A group of gorillas is called a troop.", "Gorillas share about 98% of their DNA with humans.", "Silverbacks get their name from the gray hair on their backs.", "Gorillas build a new nest to sleep in every night.", "Gorillas mostly eat plants: leaves, stems and fruit.", "Gorillas walk on their knuckles.", "Gorillas can live 35 to 40 years in the wild.", "Baby gorillas ride on their mom's back.", "Each gorilla has a unique noseprint, like a fingerprint.", "Gorillas beat their chests to show they're strong or to say hello."];
+const SOUNDS = [["Moo!", ["cow"]], ["Oink!", ["pig"]], ["Hoo hoo!", ["owl"]], ["Quack!", ["duck"]], ["Baa!", ["sheep", "lamb"]], ["Neigh!", ["horse"]], ["Ribbit!", ["frog"]], ["Hiss!", ["snake"]], ["Roar!", ["lion"]], ["Ooh ooh aah aah!", ["monkey", "gorilla", "monke", "ape"]], ["Squeak!", ["mouse"]], ["Buzz!", ["bee"]]];
+const TAG_MAPS = ["Forest", "Canyon", "Caves", "Mountains", "City", "Clouds", "Beach", "Basement", "Metropolis", "Rotating"];
+const TAG_MODES = ["Infection", "Casual", "Hunt", "Paintbrawl", "Guardian", "Minigames"];
+const TAG_TIPS = ["Push off walls with both hands at the same time to go faster.", "Look where you want to go before you jump.", "When you're being chased, change direction a lot.", "Climbing up high gives you a better view of who's coming.", "Take breaks. Your arms will thank you.", "Play in a space with nothing around you so you don't hit anything.", "Practice short, quick arm swings for more control.", "Team up with friends and call out where the lava monke is.", "Stay calm when you're tagged. Everybody gets tagged.", "Be nice in lobbies. Good vibes make better games."];
+const STORY = [["One day, ", " found a glowing banana in the forest. ", "It started talking and asked for directions to the beach. ", "They walked there together and became best friends."], ["", " was the fastest monke in the troop. ", "One afternoon a cloud challenged them to a race. ", "They won by a banana, and the cloud rained confetti."], ["Late at night, ", " heard a noise in the treehouse. ", "It was just a sleepy owl looking for a snack. ", "They shared a banana and watched the stars."], ["", " tried to climb the tallest tree in the canyon. ", "Halfway up, a squirrel offered them a ride. ", "They reached the top and saw the whole jungle."], ["", " built a raft out of banana peels. ", "It floated way better than anyone expected. ", "Now everyone in the troop wants one."]];
+const QUOTE_LINES = ["Every big climb starts with one reach.", "A good troop beats a fast monke.", "Bananas taste better when you share them.", "Getting tagged is just practice for tagging.", "Be the monke your friends want to play with."];
+
+function tttBoard(b) { const c = i => b[i] || String(i + 1); return "```\n " + c(0) + " | " + c(1) + " | " + c(2) + "\n---+---+---\n " + c(3) + " | " + c(4) + " | " + c(5) + "\n---+---+---\n " + c(6) + " | " + c(7) + " | " + c(8) + "\n```"; }
+function tttWin(b) { for (const [a, x, c] of [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]]) if (b[a] && b[a] === b[x] && b[a] === b[c]) return b[a]; return b.every(Boolean) ? "draw" : null; }
+function safeCalc(expr) {
+  const s = String(expr).replace(/\s+/g, "").replace(/x/gi, "*").replace(/÷/g, "/");
+  if (!/^[0-9+\-*/().%]{1,60}$/.test(s)) return null;
+  let i = 0;
+  const num = () => { let m = /^\d+(\.\d+)?/.exec(s.slice(i)); if (!m) return NaN; i += m[0].length; return +m[0]; };
+  const factor = () => { if (s[i] === "-") { i++; return -factor(); } if (s[i] === "(") { i++; const v = expr2(); if (s[i] !== ")") return NaN; i++; return v; } return num(); };
+  const term = () => { let v = factor(); while (s[i] === "*" || s[i] === "/" || s[i] === "%") { const o = s[i++], w = factor(); v = o === "*" ? v * w : o === "/" ? v / w : v % w; } return v; };
+  const expr2 = () => { let v = term(); while (s[i] === "+" || s[i] === "-") { const o = s[i++], w = term(); v = o === "+" ? v + w : v - w; } return v; };
+  const v = expr2();
+  return i === s.length && isFinite(v) ? Math.round(v * 1e6) / 1e6 : null;
+}
+const LONG = 30 * 24 * 3600;
+const EXTRA_CMDS = {
+  async ttt({ arg, env, me, nm, say, who }) {
+    const p = await who(); if (!p) return say("Pick someone to play, like `!ttt @name`");
+    if (p.uid === me.uid) return say("You can't play against yourself. Pick a friend!");
+    await env.state.set("ttt", { x: me.uid, o: p.uid, xn: me.display || me.name, on: p.display || p.name, b: Array(9).fill(""), turn: "X", until: Date.now() + 10 * 60000 }, 900);
+    return say(nm(me) + " (X) vs " + nm(p) + " (O)\n" + tttBoard(Array(9).fill("")) + "\n" + nm(me) + ", your move. Type `!move 1` to `!move 9`.");
+  },
+  async move({ arg, env, me, nm, say }) {
+    const g = await env.state.get("ttt"); if (!g || g.until < Date.now()) return say("No tic-tac-toe game right now. Start one with `!ttt @name`");
+    const mine = g.turn === "X" ? g.x : g.o; if (me.uid !== mine) return say(me.uid === g.x || me.uid === g.o ? "It's not your turn yet." : "You're not in this game.");
+    const n = parseInt(arg, 10) - 1; if (!(n >= 0 && n < 9)) return say("Pick a square from 1 to 9, like `!move 5`");
+    if (g.b[n]) return say("That square is taken. Pick another one.");
+    g.b[n] = g.turn; const w = tttWin(g.b);
+    if (w) { await env.state.del("ttt"); return say(tttBoard(g.b) + "\n" + (w === "draw" ? "It's a tie!" : "**" + (w === "X" ? g.xn : g.on) + "** wins! GG") ); }
+    g.turn = g.turn === "X" ? "O" : "X"; await env.state.set("ttt", g, 900);
+    return say(tttBoard(g.b) + "\n**" + (g.turn === "X" ? g.xn : g.on) + "**, your move.");
+  },
+  async rps({ arg, me, nm, say, r }) {
+    const opts = ["rock", "paper", "scissors"], pick = opts.find(o => o.startsWith(String(arg).toLowerCase().trim().slice(0, 1)) && String(arg).trim());
+    if (!pick) return say("Pick one: `!rps rock`, `!rps paper` or `!rps scissors`");
+    const bot = opts[Math.floor(r() * 3)], win = (pick === "rock" && bot === "scissors") || (pick === "paper" && bot === "rock") || (pick === "scissors" && bot === "paper");
+    return say(nm(me) + " picked **" + pick + "**, I picked **" + bot + "**. " + (pick === bot ? "Tie!" : win ? "You win!" : "I win!"));
+  },
+  async guess({ env, say, r }) {
+    const n = 1 + Math.floor(r() * 100); await env.state.set("guess", { n, tries: 0, until: Date.now() + 10 * 60000 }, 900);
+    return say("I'm thinking of a number from 1 to 100. Guess with `!g 50`");
+  },
+  async g({ arg, env, me, nm, say }) {
+    const st = await env.state.get("guess"); if (!st || st.until < Date.now()) return say("No guessing game right now. Start one with `!guess`");
+    const v = parseInt(arg, 10); if (!(v >= 1 && v <= 100)) return say("Guess a number from 1 to 100, like `!g 42`");
+    st.tries++;
+    if (v === st.n) { await env.state.del("guess"); const paid = await env.addBananas(me.uid, 2); return say(nm(me) + " got it! It was **" + st.n + "** (" + st.tries + " guesses)." + (paid ? " +2 🍌" : "")); }
+    await env.state.set("guess", st, 900); return say(v < st.n ? "Higher!" : "Lower!");
+  },
+  async scramble({ env, say, r }) {
+    const w = SCRAMBLE_WORDS[Math.floor(r() * SCRAMBLE_WORDS.length)];
+    let s = w; for (let t = 0; t < 6 && s === w; t++) s = w.split("").sort(() => r() - 0.5).join("");
+    await env.state.set("scramble", { w, until: Date.now() + 90000 }, 120);
+    return say("Unscramble this: **" + s.toUpperCase() + "**\nAnswer with `!unscramble word`");
+  },
+  async unscramble({ arg, env, me, nm, say }) {
+    const st = await env.state.get("scramble"); if (!st || st.until < Date.now()) return say("No scramble right now. Start one with `!scramble`");
+    if (String(arg).toLowerCase().trim() !== st.w) return say("Not quite, " + nm(me) + ". Keep trying!");
+    await env.state.del("scramble"); const paid = await env.addBananas(me.uid, 3);
+    return say(nm(me) + " got it: **" + st.w + "**!" + (paid ? " +3 🍌" : ""));
+  },
+  async reverse({ arg, say }) { const t = String(arg).trim().slice(0, 120); return t ? say([...t].reverse().join("")) : say("Type something to flip, like `!reverse banana`"); },
+  async math({ env, say, r }) {
+    const a = 2 + Math.floor(r() * 12), b = 2 + Math.floor(r() * 12), op = ["+", "-", "×"][Math.floor(r() * 3)];
+    const ans = op === "+" ? a + b : op === "-" ? a - b : a * b;
+    await env.state.set("math", { ans, until: Date.now() + 60000 }, 90);
+    return say("Quick! What's **" + a + " " + op + " " + b + "**? Answer with `!ans number`");
+  },
+  async ans({ arg, env, me, nm, say }) {
+    const st = await env.state.get("math"); if (!st || st.until < Date.now()) return say("No math race right now. Start one with `!math`");
+    if (parseInt(arg, 10) !== st.ans) return say("Not quite, " + nm(me) + "!");
+    await env.state.del("math"); const paid = await env.addBananas(me.uid, 3);
+    return say(nm(me) + " was fastest! It's **" + st.ans + "**." + (paid ? " +3 🍌" : ""));
+  },
+  async calc({ arg, say }) { const v = safeCalc(arg); return v === null ? say("I can do + - × ÷ and brackets, like `!calc (12+4)*3`") : say("**" + String(arg).trim().slice(0, 60) + "** = **" + v + "**"); },
+  async pet({ env, say }) { const p = (await env.state.get("pet")) || { name: "Baby Monke", food: 3, fun: 3 }; return say("**" + p.name + "**\nFood: " + "🍌".repeat(Math.max(0, p.food)) + (p.food ? "" : "hungry!") + "\nFun: " + "★".repeat(Math.max(0, p.fun)) + (p.fun ? "" : "bored!") + "\nTry `!feed`, `!play` or `!nap`"); },
+  async feed({ env, me, nm, say }) { const p = (await env.state.get("pet")) || { name: "Baby Monke", food: 3, fun: 3 }; if (p.food >= 5) return say("**" + p.name + "** is full! Try `!play` instead."); p.food++; await env.state.set("pet", p, LONG); return say(nm(me) + " fed **" + p.name + "** a banana. Yum!"); },
+  async play({ env, me, nm, say, r }) { const p = (await env.state.get("pet")) || { name: "Baby Monke", food: 3, fun: 3 }; if (p.food <= 0) return say("**" + p.name + "** is too hungry to play. Try `!feed`"); p.fun = Math.min(5, p.fun + 1); p.food = Math.max(0, p.food - 1); await env.state.set("pet", p, LONG); return say(nm(me) + " " + ["played tag with", "swung on vines with", "built a fort with", "had a dance party with"][Math.floor(r() * 4)] + " **" + p.name + "**!"); },
+  async nap({ env, say }) { const p = (await env.state.get("pet")) || { name: "Baby Monke", food: 3, fun: 3 }; p.fun = Math.max(0, p.fun - 1); p.food = Math.max(0, p.food - 1); await env.state.set("pet", p, LONG); return say("**" + p.name + "** curled up for a nap. Zzz..."); },
+  async petname({ arg, env, say }) { const n = String(arg).replace(/[^A-Za-z0-9 ]/g, "").trim().slice(0, 20); if (n.length < 2) return say("Give it a name, like `!petname Bongo`"); const p = (await env.state.get("pet")) || { name: "Baby Monke", food: 3, fun: 3 }; p.name = n; await env.state.set("pet", p, LONG); return say("The pet is now called **" + n + "**!"); },
+  async maps({ say }) { return say("**Maps:** " + TAG_MAPS.join(", ")); },
+  async modes({ say }) { return say("**Modes:** " + TAG_MODES.join(", ")); },
+  async randommap({ say, r }) { return say("Let's play on **" + TAG_MAPS[Math.floor(r() * TAG_MAPS.length)] + "**!"); },
+  async randommode({ say, r }) { return say("Let's play **" + TAG_MODES[Math.floor(r() * TAG_MODES.length)] + "**!"); },
+  async teams({ arg, env, say, r }) {
+    const names = [...new Set((String(arg).match(/@([A-Za-z0-9_]{2,16})/g) || []).map(x => x.slice(1)))].slice(0, 20);
+    if (names.length < 2) return say("Tag at least 2 people, like `!teams @a @b @c @d`");
+    const ppl = []; for (const n of names) { const p = await env.findUser(n); ppl.push(p ? (p.display || p.name) : n); }
+    for (let i = ppl.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [ppl[i], ppl[j]] = [ppl[j], ppl[i]]; }
+    const h = Math.ceil(ppl.length / 2); return say("**Team 1:** " + ppl.slice(0, h).join(", ") + "\n**Team 2:** " + ppl.slice(h).join(", "));
+  },
+  async tip({ say, r }) { return say("Tip: " + TAG_TIPS[Math.floor(r() * TAG_TIPS.length)]); },
+  async count({ env, say }) { const c = (await env.state.get("count")) || { n: 0 }; return say("The count is at **" + c.n + "**. Next number: **" + (c.n + 1) + "**"); },
+  async countreset({ env, say }) { if (!env.isMod) return say("Only mods and the owner can reset the count."); await env.state.set("count", { n: 0, last: "" }, LONG); return say("The count is back to 0. Start with **1**!"); },
+  async hype({ env, me, nm, say, who, r }) { const p = (await who()) || me; return say(nm(p) + " " + HYPE[Math.floor(r() * HYPE.length)]); },
+  async gg({ me, nm, say, who }) { const p = await who(); return say(p ? nm(me) + " says GG to " + nm(p) + "! Great game!" : "GG everyone! Great game!"); },
+  async cheer({ say, r }) { return say(["Let's goooo, troop!", "Everybody beat your chest!", "This server is the best server!", "Ooga booga! The troop is unstoppable!"][Math.floor(r() * 4)]); },
+  async story({ me, nm, say, who, r }) { const p = (await who()) || me, s = STORY[Math.floor(r() * STORY.length)]; return say(s[0] + nm(p) + s[1] + s[2] + s[3]); },
+  async riddle({ env, say, r }) { const [q, a] = RIDDLES[Math.floor(r() * RIDDLES.length)]; await env.state.set("riddle", { q, a, until: Date.now() + 3 * 60000 }, 240); return say("**Riddle:** " + q + "\nAnswer with `!solve ...`"); },
+  async solve({ arg, env, me, nm, say }) {
+    const st = await env.state.get("riddle"); if (!st || st.until < Date.now()) return say("No riddle right now. Get one with `!riddle`");
+    const g = String(arg).toLowerCase().replace(/[^a-z ]/g, "").trim();
+    if (!st.a.some(x => g === x || g === x.replace(/^(a|an|your) /, ""))) return say("Not quite, " + nm(me) + ". Think about it!");
+    await env.state.del("riddle"); const paid = await env.addBananas(me.uid, 3); return say(nm(me) + " solved it! The answer is **" + st.a[0] + "**." + (paid ? " +3 🍌" : ""));
+  },
+  async wyr({ say, r }) { return say(WYR[Math.floor(r() * WYR.length)]); },
+  async thisorthat({ say, r }) { return say(TOT[Math.floor(r() * TOT.length)]); },
+  async addquote({ arg, env, me, nm, say }) {
+    const t = String(arg).replace(/\s+/g, " ").trim().slice(0, 140); if (t.length < 3) return say("Type the quote after it, like `!addquote ooga booga forever`");
+    if (env.hasBad && env.hasBad(t)) return say("That quote has a word we don't allow.");
+    const q = (await env.state.get("quotes")) || []; q.push({ t, by: me.display || me.name }); await env.state.set("quotes", q.slice(-100), LONG); return say("Saved quote #" + Math.min(100, q.length) + " from " + nm(me) + ".");
+  },
+  async quote({ env, say, r }) { const q = (await env.state.get("quotes")) || []; if (!q.length) return say("“" + QUOTE_LINES[Math.floor(r() * QUOTE_LINES.length)] + "”\nSave your own with `!addquote`"); const x = q[Math.floor(r() * q.length)]; return say("“" + x.t + "”\n- " + x.by); },
+  async quotes({ env, say }) { const q = (await env.state.get("quotes")) || []; return say(q.length ? q.length + (q.length === 1 ? " quote" : " quotes") + " saved. Get one with `!quote`" : "No quotes saved yet. Add one with `!addquote`"); },
+  async animal({ say, r }) { const [a, f] = ANIMAL_FACTS[Math.floor(r() * ANIMAL_FACTS.length)]; return say("**" + a + "** " + f); },
+  async gorilla({ say, r }) { return say(GORILLA_FACTS[Math.floor(r() * GORILLA_FACTS.length)]); },
+  async sound({ env, say, r }) { const [s, a] = SOUNDS[Math.floor(r() * SOUNDS.length)]; await env.state.set("sound", { a, until: Date.now() + 60000 }, 90); return say("Who says **" + s + "**? Answer with `!itsa` and the animal."); },
+  async itsa({ arg, env, me, nm, say }) { const st = await env.state.get("sound"); if (!st || st.until < Date.now()) return say("No sound to guess right now. Try `!sound`"); const g = String(arg).toLowerCase().replace(/^an? /, "").trim(); if (!st.a.includes(g)) return say("Nope! Try again."); await env.state.del("sound"); return say(nm(me) + " got it! It's a **" + st.a[0] + "**!"); }
+};
+BOT_LIST.animalbot.cmds.push(["!itsa", "Answer the sound, like !itsa cow"]);
+async function botCount(text, env) {
+  if (!env.bots.includes("countbot")) return [];
+  const v = parseInt(text, 10), c = (await env.state.get("count")) || { n: 0, last: "" }, me = env.author;
+  const say = t => [{ bot: "countbot", text: t }];
+  if (v !== c.n + 1 || c.last === me.uid) {
+    if (c.n === 0 && v !== 1) return [];
+    const why = c.last === me.uid ? "counted twice in a row" : "said " + v + " instead of " + (c.n + 1);
+    await env.state.set("count", { n: 0, last: "" }, LONG);
+    return say("**" + (me.display || me.name) + "** " + why + ". The count was at **" + c.n + "**. Start again from **1**!");
+  }
+  await env.state.set("count", { n: v, last: me.uid, best: Math.max(c.best || 0, v) }, LONG);
+  return v % 25 === 0 ? say("**" + v + "**! The troop is counting strong.") : [];
+}
+const BOT_IDS = Object.keys(BOT_LIST);
+const DEFAULT_BOTS = ["yapbot", "funbot", "bananabot", "modbot"];
+const BOT_CMD = {}; for (const [id, b] of Object.entries(BOT_LIST)) for (const [c] of b.cmds) BOT_CMD[c.slice(1)] = id;
+
+const JOKES = [
+  "Why don't gorillas use computers? They're scared of the mouse. 🐭",
+  "What do you call a monkey that won't behave? A ba-NO-na. 🍌",
+  "Why did the banana go to the doctor? It wasn't peeling well.",
+  "What's a gorilla's favorite cookie? Chocolate chimp. 🍪",
+  "Why can't you trust a tree? It seems shady. 🌳",
+  "What do you call a sleeping dinosaur? A dino-snore. 🦖",
+  "Why did the scarecrow win an award? He was outstanding in his field.",
+  "What did one wall say to the other? I'll meet you at the corner.",
+  "Why are ghosts bad liars? You can see right through them. 👻",
+  "What do you call a fish with no eyes? A fsh. 🐟",
+  "Why did the math book look sad? It had too many problems.",
+  "What do monkeys wear to cook? Ape-rons. 👨‍🍳",
+  "How do you make an octopus laugh? With ten-tickles. 🐙",
+  "Why did the cookie go to the nurse? It felt crummy.",
+  "What do you call a bear with no teeth? A gummy bear. 🧸",
+  "Why can't a bicycle stand up by itself? It's two tired. 🚲",
+  "What did the ocean say to the beach? Nothing, it just waved. 🌊",
+  "Why did the gorilla bring a ladder to school? To get to high school.",
+  "What's orange and sounds like a parrot? A carrot. 🥕",
+  "Why do bananas wear sunscreen? So they don't peel. ☀️",
+  "What kind of key opens a banana? A mon-key. 🔑",
+  "Why was the computer cold? It left its Windows open. 🪟",
+  "What do you call cheese that isn't yours? Nacho cheese. 🧀",
+  "Why did the chicken join a band? It had the drumsticks. 🥁"
+];
+const FACTS = [
+  "Gorillas share about 98% of their DNA with humans. 🦍",
+  "A group of gorillas is called a troop (or a band).",
+  "Gorillas mostly eat plants: leaves, stems, fruit and bamboo. 🌿",
+  "Adult male gorillas are called silverbacks because of the silver hair on their backs.",
+  "Gorillas build a fresh nest to sleep in almost every night.",
+  "Octopuses have three hearts and blue blood. 🐙",
+  "Sharks have been around longer than trees. 🦈",
+  "Sea otters hold hands while they sleep so they don't drift apart. 🦦",
+  "A group of flamingos is called a flamboyance. 🦩",
+  "A day on Venus is longer than a year on Venus. 🪐",
+  "Bananas are berries, but strawberries aren't. 🍌",
+  "Honey never spoils. Archaeologists have found 3,000-year-old honey that was still good. 🍯",
+  "Sloths can hold their breath longer than dolphins can, up to about 40 minutes. 🦥",
+  "A blue whale's heart is about as big as a small car. 🐋",
+  "Butterflies taste with their feet. 🦋",
+  "Elephants can recognize themselves in a mirror. 🐘",
+  "Koalas sleep up to 22 hours a day. 🐨",
+  "Hummingbirds are the only birds that can fly backwards.",
+  "Starfish don't have brains. ⭐",
+  "Gentoo penguins give their partners pebbles to build nests. 🐧",
+  "Every gorilla has a unique nose print, like a fingerprint.",
+  "Your heart beats about 100,000 times every day. ❤️",
+  "Owls can turn their heads about 270 degrees. 🦉",
+  "Giraffes have the same number of neck bones as humans: seven. 🦒"
+];
+const EIGHT = ["Yes, definitely! ✅", "It is certain. 💯", "Without a doubt.", "Most likely. 👍", "Signs point to yes. 👉", "Ask again later. ⏳", "Better not tell you now. 🤐", "Can't say right now. 🔮", "Don't count on it. 🙅", "My sources say no. 📉", "Very doubtful. 🤔", "Outlook not so good. 🌧️", "Ooga says yes. 🦍", "Ooga says no. 🦍"];
+const MONKE = ["Climb first, ask questions later. 🌳", "A banana a day keeps the boredom away. 🍌", "Never trust a floor. 🦍", "Every tree was once a tiny seed. Keep growing.", "Ooga booga is not just words. It is a lifestyle.", "The fastest monke is the one who never stops.", "Be the silverback you wish to see in the troop.", "If you fall, that just means you were climbing.", "Share your bananas and you'll never eat alone.", "Real monkes say gg win or lose."];
+const COMPLIMENTS = ["is an absolute legend 🏆", "has the best vibes in the whole jungle 🌴", "is cooler than a frozen banana 🥶🍌", "makes this server 100% better 💯", "is a top-tier monke 🦍", "is the reason the troop smiles 😄", "climbs faster than anyone here 🌳", "is super kind and everyone knows it 💖"];
+const TRIVIA = [
+  ["What planet is known as the Red Planet?", ["mars"]], ["How many legs does a spider have?", ["8", "eight"]], ["What's the largest ocean on Earth?", ["pacific", "pacific ocean"]],
+  ["What do bees make?", ["honey"]], ["How many days are in a leap year?", ["366"]], ["What's the tallest animal in the world?", ["giraffe", "giraffes"]],
+  ["What color do you get when you mix blue and yellow?", ["green"]], ["What's the closest star to Earth?", ["sun", "the sun"]], ["How many continents are there?", ["7", "seven"]],
+  ["What's frozen water called?", ["ice"]], ["Which animal is known as the King of the Jungle?", ["lion", "lions"]], ["How many sides does a hexagon have?", ["6", "six"]],
+  ["What's the biggest planet in our solar system?", ["jupiter"]], ["What gas do plants take in from the air?", ["carbon dioxide", "co2"]], ["What's 7 times 8?", ["56", "fifty six", "fifty-six"]],
+  ["What's the fastest land animal?", ["cheetah", "cheetahs"]], ["How many minutes are in an hour?", ["60", "sixty"]], ["Which fruit do monkeys love in cartoons?", ["banana", "bananas"]],
+  ["What's the largest mammal on Earth?", ["blue whale", "whale"]], ["What do caterpillars turn into?", ["butterfly", "butterflies", "moth", "moths"]], ["How many colors are in a rainbow?", ["7", "seven"]],
+  ["What's the capital of France?", ["paris"]], ["What's 12 + 15?", ["27", "twenty seven", "twenty-seven"]], ["Which planet has big rings around it?", ["saturn"]],
+  ["What's a baby kangaroo called?", ["joey"]], ["How many hours are in a day?", ["24", "twenty four", "twenty-four"]], ["What's the main language spoken in Brazil?", ["portuguese"]],
+  ["Which bird is a symbol of peace?", ["dove", "doves"]], ["What's the hardest natural material?", ["diamond", "diamonds"]], ["How many wheels does a tricycle have?", ["3", "three"]]
+];
+const BOT_RULES = ["Be kind. No bullying.", "Keep it clean: no swearing or rude pictures.", "Stay safe: never share your address, school, phone number or passwords.", "No spam.", "Be yourself: don't pretend to be someone else."];
+
+const botPick = (list, r) => list[Math.floor(r() * list.length) % list.length];
+const botNorm = t => String(t || "").toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim();
+const botLevel = xp => Math.floor(Math.sqrt((xp || 0) / 3)) + 1;
+
+// text: the message; env: {author:{uid,name,display}, bots:[ids], isMod, place:{name, members}, chan,
+//   findUser(name)->profile|null, getProfile(uid), top(n)->[profiles], state.get(k), state.set(k,v,ttlSec), state.del(k),
+//   addBananas(uid,n)->bool, transfer(fromUid,toUid,n)->{ok,msg}, rand()}
+// returns [{bot, text}]
+// bot replies start with words, not an emoji
+function botPlain(t) { return String(t).replace(/^(?:[\p{Extended_Pictographic}\u2600-\u27BF]\uFE0F?\s*)+/u, "").replace(/\n(?:[\p{Extended_Pictographic}\u2600-\u27BF]\uFE0F?\s*)+/gu, "\n").replace(/[ \t]*(?!🍌)\p{Extended_Pictographic}\uFE0F?(?=[ \t]*(?:\n|$))/gu, ""); }
+async function botRun(text, env) {
+  if (/^\d{1,7}$/.test(String(text || "").trim())) return botCount(String(text).trim(), env);
+  const m = /^!([a-z0-9]+)\b\s*([\s\S]*)$/i.exec(String(text || "").trim());
+  if (!m) return [];
+  const cmd = m[1].toLowerCase(), arg = m[2].trim().slice(0, 200), r = env.rand || Math.random;
+  const bot = cmd === "help" ? "yapbot" : BOT_CMD[cmd];
+  if (!bot || !env.bots.includes(bot)) return [];
+  const me = env.author, nm = p => "**" + (p.display || p.name || "someone") + "**";
+  const say = t => [{ bot, text: botPlain(t) }];
+  const who = async () => { const mm = /@([A-Za-z0-9_]{2,16})/.exec(arg); return mm ? await env.findUser(mm[1]) : null; };
+  if (EXTRA_CMDS[cmd]) return EXTRA_CMDS[cmd]({ arg, env, me, nm, say, who, r, bot, text });
+  switch (cmd) {
+    case "help": {
+      const lines = env.bots.map(id => { const b = BOT_LIST[id]; return "**" + b.name + "**: " + b.cmds.map(c => "`" + c[0] + "`").join(" "); });
+      return say("🤖 **Bot commands**\n" + lines.join("\n") + "\nTip: type `!` in the message box to see them all.");
+    }
+    case "ping": return say("🏓 Pong! All bots are awake.");
+    case "roll": {
+      const d = /^(\d{1,2})?d(\d{1,3})$/i.exec(arg.replace(/\s/g, "")) || (/^\d{1,3}$/.test(arg) ? [null, "1", arg] : null);
+      const n = Math.min(10, Math.max(1, +(d && d[1]) || 1)), s = Math.min(100, Math.max(2, +(d && d[2]) || 6));
+      const rolls = Array.from({ length: n }, () => 1 + Math.floor(r() * s));
+      return say("🎲 " + nm(me) + " rolled " + (n > 1 ? rolls.join(" + ") + " = **" + rolls.reduce((a, b) => a + b, 0) + "**" : "**" + rolls[0] + "**") + " (" + n + "d" + s + ")");
+    }
+    case "flip": return say("🪙 " + nm(me) + " flipped a coin: **" + (r() < 0.5 ? "Heads" : "Tails") + "**!");
+    case "8ball": return arg ? say("🎱 " + botPick(EIGHT, r)) : say("🎱 Ask me a question, like `!8ball will I win today?`");
+    case "choose": {
+      const opts = arg.split(/\s*(?:\||,|\bor\b)\s*/i).map(x => x.trim()).filter(Boolean).slice(0, 10);
+      return opts.length < 2 ? say("🤔 Give me at least 2 things, like `!choose pizza | tacos`") : say("🤔 I pick... **" + botPick(opts, r) + "**!");
+    }
+    case "server": return say("🏠 **" + env.place.name + "**\n#" + env.chan + (env.place.members != null ? " · " + env.place.members + " members" : "") + " · bots: " + env.bots.map(id => BOT_LIST[id].name).join(", "));
+    case "whois": {
+      const p = (await who()) || me;
+      return say("🪪 " + nm(p) + " (@" + p.name + ")\nLevel **" + botLevel(p.xp ?? p.bananas) + "** · " + (p.bananas || 0) + " 🍌" + (p.joined ? " · joined " + new Date(p.joined).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "") + (p.status ? "\n💬 " + String(p.status).slice(0, 80) : ""));
+    }
+    case "joke": return say("😂 " + botPick(JOKES, r));
+    case "fact": return say("🧠 **Fact:** " + botPick(FACTS, r));
+    case "monke": return say("🦍 *\"" + botPick(MONKE, r) + "\"*");
+    case "rate": return arg ? say("📊 I rate **" + arg.slice(0, 60) + "** a **" + Math.floor(r() * 11) + "/10**!") : say("📊 What should I rate? Like `!rate bananas`");
+    case "hug": { const p = await who(); return say(p ? "🤗 " + nm(me) + " gives " + nm(p) + " a big gorilla hug!" : "🤗 " + nm(me) + " hugs the whole troop!"); }
+    case "compliment": { const p = (await who()) || me; return say("💖 " + nm(p) + " " + botPick(COMPLIMENTS, r)); }
+    case "trivia": {
+      const cur = await env.state.get("trivia");
+      if (cur && cur.until > Date.now()) return say("❓ There's already a question: **" + cur.q + "**\nAnswer with `!answer ...`");
+      const [q, a] = botPick(TRIVIA, r);
+      await env.state.set("trivia", { q, a, until: Date.now() + 60000 }, 70);
+      return say("❓ **Trivia time!** " + q + "\nFirst to type `!answer ...` in the next 60 seconds wins **5 🍌**!");
+    }
+    case "answer": {
+      const cur = await env.state.get("trivia");
+      if (!cur || cur.until < Date.now()) return say("❓ No trivia right now. Start one with `!trivia`");
+      if (!arg) return say("❓ Type your answer after it, like `!answer mars`");
+      if (!cur.a.includes(botNorm(arg))) return say("❌ Not quite, " + nm(me) + ". Keep trying!");
+      await env.state.del("trivia");
+      const paid = await env.addBananas(me.uid, 5);
+      return say("🎉 " + nm(me) + " got it! The answer was **" + cur.a[0] + "**." + (paid ? " +5 🍌" : ""));
+    }
+    case "infection": case "run": case "tag": case "lava": {
+      const now = Date.now(), K = "infect";
+      let g = await env.state.get(K);
+      const pn = u => "**" + ((g && g.names[u]) || "someone") + "**", list = a => a.map(pn).join(", ");
+      const players = () => Object.keys(g.names), runners = () => players().filter(u => !g.lava.includes(u));
+      if (g && g.until < now) {
+        const surv = runners(), paid = players().length >= 3;
+        await env.state.del(K);
+        if (paid) for (const u of surv) { await env.addBananas(u, 5); if (env.stat) await env.stat(u, "surv"); }
+        const end = players().length < 2 ? "⏰ That tag round ended. Nobody joined." : surv.length ? "⏰ Time's up! The lava didn't get " + list(surv) + ". Survivors win" + (paid ? " (+5 🍌 each)" : "") + "!" : "⏰ Time's up! The lava got everyone.";
+        if (cmd !== "infection") return say(end + "\nStart a new round with `!infection`");
+        g = null; const next = await botRun(text, env); return [{ bot, text: end }].concat(next);
+      }
+      if (cmd === "infection" && !g) {
+        g = { host: me.uid, names: { [me.uid]: me.display || me.name || "someone" }, lava: [me.uid], started: now, until: now + 10 * 60000 };
+        await env.state.set(K, g, 15 * 60);
+        return say("🔥 **Infection!** " + pn(me.uid) + " is the lava monke.\nType `!run` to join. Lava monkes catch people with `!tag @name`. Last monke standing gets **10 🍌**, and anyone still running after 10 minutes gets **5 🍌**.");
+      }
+      if (!g) return say("🔥 No tag game right now. Start one with `!infection`");
+      const left = Math.max(1, Math.ceil((g.until - now) / 60000));
+      if (cmd === "infection" || cmd === "lava") return say("🔥 **Lava:** " + list(g.lava) + "\n🏃 **Running:** " + (runners().length ? list(runners()) : "nobody yet") + "\n" + left + " min left. Join with `!run`");
+      if (cmd === "run") {
+        if (g.names[me.uid]) return say(g.lava.includes(me.uid) ? "🔥 You're lava, " + nm(me) + "! Go tag someone with `!tag @name`" : "🏃 You're already running, " + nm(me) + "!");
+        if (players().length >= 30) return say("🔥 This round is full. Wait for the next one!");
+        g.names[me.uid] = me.display || me.name || "someone";
+        await env.state.set(K, g, Math.ceil((g.until - now) / 1000) + 300);
+        return say("🏃 " + nm(me) + " is running from the lava! " + runners().length + " running, " + g.lava.length + " lava.");
+      }
+      // tag
+      if (!g.lava.includes(me.uid)) return say(g.names[me.uid] ? "🏃 You're not lava, " + nm(me) + ". Keep running!" : "🔥 You're not in this round. Join with `!run`");
+      const p = await who();
+      if (!p) return say("🔥 Tag someone who's running, like `!tag @name`");
+      if (!g.names[p.uid]) return say("🔥 " + nm(p) + " isn't in this round.");
+      if (g.lava.includes(p.uid)) return say("🔥 " + nm(p) + " is already lava!");
+      g.lava.push(p.uid);
+      if (env.stat) await env.stat(me.uid, "tags");
+      if (!runners().length) {
+        const paid = players().length >= 3 && now - g.started >= 60000;
+        await env.state.del(K);
+        if (paid) { await env.addBananas(p.uid, 10); if (env.stat) await env.stat(p.uid, "tagWins"); }
+        return say("🔥 " + nm(me) + " tagged " + nm(p) + "! Everyone is lava. " + nm(p) + " was the last monke standing" + (paid ? " (+10 🍌)" : "") + ". GG!\nPlay again with `!infection`");
+      }
+      await env.state.set(K, g, Math.ceil((g.until - now) / 1000) + 300);
+      return say("🔥 " + nm(me) + " tagged " + nm(p) + "! " + nm(p) + " is lava now. " + runners().length + " left: " + list(runners()));
+    }
+    case "bananas": { const p = (await who()) || me; return say("🍌 " + nm(p) + " has **" + (p.bananas || 0) + "** bananas."); }
+    case "level": { const p = (await who()) || me, xp = p.xp ?? p.bananas ?? 0, lv = botLevel(xp); return say("⬆️ " + nm(p) + " is level **" + lv + "** (" + xp + " XP, " + (3 * lv * lv - xp) + " to go)"); }
+    case "top": {
+      const t = await env.top(5);
+      return say(t.length ? "🏆 **Top bananas**\n" + t.map((p, i) => (i + 1) + "." + " " + nm(p) + ": " + (p.bananas || 0) + " 🍌").join("\n") : "🏆 Nobody has bananas yet!");
+    }
+    case "give": {
+      const p = await who(), n = Math.floor(+((/(\d+)\s*$/.exec(arg) || [])[1] || 0));
+      if (!p || !n) return say("🍌 Use it like `!give @name 10`");
+      if (p.uid === me.uid) return say("🍌 You can't give bananas to yourself, silly!");
+      if (n > 500) return say("🍌 You can give up to 500 bananas at a time.");
+      const res = await env.transfer(me.uid, p.uid, n);
+      return say(res.ok ? "🍌 " + nm(me) + " gave **" + n + "** bananas to " + nm(p) + "! How nice." : "🍌 " + res.msg);
+    }
+    case "rules": return say("📜 **Rules**\n" + BOT_RULES.map((x, i) => (i + 1) + ". " + x).join("\n"));
+    case "report": return say("🚩 To report someone, right-click (or long-press) their message and pick **Report**. The owner will see it.");
+    case "warn": {
+      if (!env.isMod) return say("🛡️ Only mods and the owner can warn people.");
+      const p = await who(); if (!p) return say("🛡️ Use it like `!warn @name please stop spamming`");
+      const why = arg.replace(/@[A-Za-z0-9_]+/, "").trim().slice(0, 120);
+      return say("⚠️ " + nm(p) + " has been warned by " + nm(me) + (why ? ": " + why.replace(/[.!?]+$/, "") + "." : ".") + " Please follow the rules!");
+    }
+  }
+  return [];
+}
+function botWelcome(name, place) { return "Welcome to **" + place + "**, **" + name + "**! Type `!help` to see what the bots can do."; }
+function botBirthday(name) { return "Happy birthday, **" + name + "**! 🎉 The whole troop hopes you have an awesome day! (+50 🍌 from the bots)"; }
+function botGotw(name, place, reason, prize) { return "**" + name + "** is the Gorilla of the Week in **" + place + "**!" + (reason ? " “" + reason + "”" : "") + " Everyone say GG!" + (prize ? " (+100 🍌)" : ""); }
+function botSpamWarn(name) { return "**" + name + "**, slow down please. No spamming."; }
+
+{ BOT_LIST, BOT_IDS, BOT_CATS, DEFAULT_BOTS, botRun, botWelcome, botSpamWarn, botBirthday, botGotw };
+
 /* ===== lib/rules.js ===== */
 // Who can read and write what. Every database request goes through these checks on the server.
 
 const BUILTIN_MAPS = ["forest", "canyon", "caves", "mountains", "city", "clouds", "beach", "basement"];
 const BUILTIN_FLAGS = { rules: { rules: true }, announcements: { ann: true } };
 const PERMS = ["manageMessages", "timeout", "slowmode", "announce"];
-const SHARED = ["reacts", "votes", "threadCount", "threadLast"];
+const SHARED = ["reacts", "votes", "threadCount", "threadLast", "flags"];
 const CE_RE = /^data:image\/(png|webp|gif|jpeg);base64,[A-Za-z0-9+/=]+$/;
 const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 
@@ -274,7 +796,7 @@ const convoKeyOfMsgPath = seg => seg[0] === "ch" ? seg[1] : seg[0] === "dm" ? "d
 async function readable(ctx, path, data) {
   const seg = path.split("/"), top = seg[0];
   switch (top) {
-    case "meta": case "mapcfg": case "mod": case "profiles": case "emoji": case "images": return data;
+    case "meta": case "mapcfg": case "mod": case "profiles": case "emoji": case "images": case "stickers": return data;
     case "sounds": return data;
     case "inbox": return seg[1] === ctx.uid ? data : null;
     case "events": {
@@ -302,7 +824,22 @@ async function readable(ctx, path, data) {
     case "dmidx": return seg[1] === ctx.uid ? data : null;
     case "freq": return seg[1] === ctx.uid ? data : null;
     case "gifts": return seg[1] === ctx.uid ? data : null;
+    case "bank": return seg[1] === ctx.uid ? data : null;
+    case "invites": return data;
+    case "gotw": { if (!data) return data; if (seg[1].startsWith("s-")) return (await serverVisible(ctx, await ctx.server(seg[1].slice(2)))) ? data : null; return data; }
+    case "sreports": { const srv = await ctx.server(seg[1]); return srv && (srv.owner === ctx.uid || await ctx.isOwner()) ? data : null; }
+    case "codes": {
+      if (!data || !(data.until > Date.now())) return null;
+      const w = String(data.where || "");
+      if (w.startsWith("s-")) return (await serverVisible(ctx, await ctx.server(w.slice(2)))) ? data : null;
+      return w === "global" ? data : null;
+    }
     case "reports": return (seg[1] === ctx.uid || await ctx.isOwner()) ? data : null;
+    case "modlog": {
+      if (seg[1] === "global") return (await ctx.isOwner()) || (await ctx.can("manageMessages")) || (await ctx.can("timeout")) ? data : null;
+      if (String(seg[1]).startsWith("s-")) { const srv = await ctx.server(seg[1].slice(2)); return srv && (srv.owner === ctx.uid || await ctx.isOwner()) ? data : null; }
+      return null;
+    }
     case "data": return seg[2] === ctx.uid ? data : null;
     default: return null;
   }
@@ -310,7 +847,7 @@ async function readable(ctx, path, data) {
 // Can the user list this collection at all? (Individual docs are still filtered by readable.)
 async function canListCollection(ctx, colPath) {
   const seg = colPath.split("/");
-  if (seg.length === 1) return ["meta", "mapcfg", "mod", "profiles", "emoji", "servers", "gdmmeta", "last", "reports", "dmidx", "events", "sounds"].includes(seg[0]);
+  if (seg.length === 1) return ["meta", "mapcfg", "mod", "profiles", "emoji", "servers", "gdmmeta", "last", "reports", "dmidx", "events", "sounds", "codes", "gotw", "stickers"].includes(seg[0]);
   if (seg.length === 3 && seg[2] === "m") {
     if (seg[0] === "ch") return canReadChannel(ctx, seg[1]);
     if (seg[0] === "dm") return inPair(ctx, seg[1]);
@@ -318,6 +855,107 @@ async function canListCollection(ctx, colPath) {
     if (seg[0] === "th") return canSeeThread(ctx, seg[1]);
   }
   return false;
+}
+
+
+/* ---------- phone / computer notifications ---------- */
+function pushPreview(m) { return m.text ? censor(str(m.text, 140)) : m.img ? "Sent a picture" : m.sticker ? "Sent a sticker" : m.voice ? "Sent a voice message" : m.poll ? "Made a poll: " + censor(str(m.poll.q, 80)) : "Sent a message"; }
+async function authorName(ctx, uid) { const p = await ctx.doc("profiles/" + uid); return str((p && (p.display || p.name)) || "Someone", 32); }
+function addPush(ctx, to, payload) { (ctx.pushes = ctx.pushes || []).push({ uid: to, payload }); }
+async function queueMsgPush(ctx, top, key, m, uid) {
+  const name = await authorName(ctx, uid), k = top === "dm" ? "dm~" + key : "gdm~" + key;
+  const base = { body: pushPreview(m), tag: k, url: "/?go=" + encodeURIComponent(k) };
+  if (top === "dm") {
+    const other = key.split("~").find(x => x !== uid);
+    if (other) addPush(ctx, other, Object.assign({ title: name }, base));
+  } else {
+    const g = await ctx.group(key); if (!g) return;
+    const gname = str(g.name, 32) || "your group";
+    (g.members || []).filter(u => u !== uid).slice(0, 6).forEach(u => addPush(ctx, u, Object.assign({ title: name + " in " + gname }, base)));
+  }
+}
+async function queuePingPush(ctx, to, item, uid) {
+  if (!item || to === uid) return;
+  const k = String(item.k || "");
+  if (!/^[A-Za-z0-9_.~:-]{1,200}$/.test(k) || k.startsWith("dm~") || k.startsWith("gdm~")) return;
+  const chanKey = k.startsWith("th~") ? k.slice(3).split("~")[0] : k;
+  if (!(await canReadChannel(makeCtx(to), chanKey))) return;
+  const name = await authorName(ctx, uid), ch = chanKey.split(".").slice(1).join(".") || "chat";
+  addPush(ctx, to, { title: name + (item.kind === "reply" ? " replied in #" : " pinged you in #") + ch, body: item.text || "", tag: k, url: "/?go=" + encodeURIComponent(k) });
+}
+/* ---------- helper bots ---------- */
+function serverBots(srv) { return srv ? (Array.isArray(srv.bots) ? srv.bots.filter(b => BOT_IDS.includes(b)) : DEFAULT_BOTS.slice()) : DEFAULT_BOTS.slice(); }
+const MAP_NAMES = { forest: "Forest", canyon: "Canyon", caves: "Caves", mountains: "Mountains", city: "City", clouds: "Clouds", beach: "Beach", basement: "Basement" };
+// banana changes from bots go into a "bank" box that the person's own app collects, so nothing gets overwritten
+async function bankAdd(ctx, extra, u, n, why, xp) {
+  const path = "bank/" + u, cur = (await ctx.doc(path)) || { items: [] };
+  const next = { items: (cur.items || []).slice(-40).concat({ id: randomId(10), n, why: String(why || "").slice(0, 40), xp: !!xp }) };
+  ctx.prime(path, next);
+  const i = extra.findIndex(x => x.path === path); if (i > -1) extra.splice(i, 1);
+  extra.push({ path, data: next });
+}
+// mod log: modlog/global (site mods) and modlog/s-<server> (that server's owner). Only the server writes it.
+async function modLogAdd(ctx, extra, scope, entry) {
+  const path = "modlog/" + scope, i = extra.findIndex(x => x.path === path);
+  const cur = i > -1 ? extra[i].data : ((await ctx.doc(path)) || { items: [] });
+  const e = { id: randomId(10), by: ctx.uid, ts: Date.now(), act: str(entry.act, 20), who: str(entry.who, 80), text: str(entry.text, 140), where: str(entry.where, 60) };
+  const next = { items: ((cur && cur.items) || []).slice(-199).concat(e) };
+  ctx.prime(path, next); if (i > -1) extra.splice(i, 1); extra.push({ path, data: next });
+}
+const GAMES = ["gtag", "amongus", "minecraft", "roblox", "fortnite", "capuchin", "animalco", "recroom", "beatsaber", "other"];
+const SERVER_BGS = ["pines","lava","forest","canopy","mountains","canyon","caves","beach","clouds","city","basement","m-lava","m-stars","m-rain","m-forest","m-clouds","m-fireflies"];
+const SERVER_CATS = ["infection", "casual", "comp", "hunt", "fanart", "hangout", "cosmetics", "other"];
+function botMsg(key, bot, text, ts) { return { path: "ch/" + key + "/m/" + randomId(20), data: { uid: "bot:" + bot, ts, text: String(text).slice(0, 1500), reacts: {}, bot: 1 } }; }
+async function botExtras(ctx, key, ci, msg, uid) {
+  const bots = ci.server ? serverBots(ci.server) : DEFAULT_BOTS.slice();
+  const extra = []; if (!bots.length) return extra;
+  const text = String(msg.text || "");
+  const getP = async u => { const p = await ctx.doc("profiles/" + u); return p ? Object.assign({ uid: u }, p) : null; };
+  const me = (await getP(uid)) || { uid, name: "someone" };
+  const isCount = bots.includes("countbot") && /^\d{1,7}$/.test(text.trim());
+  // ModBot: warn people who post the same thing over and over
+  if (bots.includes("modbot") && !text.startsWith("!") && !isCount) {
+    const sk = "spam:" + uid + ":" + key, prev = await cmd("GET", sk);
+    let st = { t: "", n: 0 }; try { if (prev) st = JSON.parse(prev); } catch (e) {}
+    const norm = text.toLowerCase().trim();
+    st = norm && norm === st.t ? { t: norm, n: st.n + 1 } : { t: norm, n: 1 };
+    await cmd("SET", sk, JSON.stringify(st), "EX", 40);
+    if (st.n >= 3 && await cmd("SET", "spamwarn:" + uid + ":" + key, "1", "EX", 60, "NX")) extra.push(botMsg(key, "modbot", botSpamWarn(me.display || me.name), msg.ts + 1));
+    return extra;
+  }
+  if (!text.startsWith("!") && !isCount) return extra;
+  const isMod = (await ctx.can("timeout")) || (await ctx.can("manageMessages")) || !!(ci.server && ci.server.owner === uid);
+  const env = {
+    author: me, bots, isMod, chan: ci.chan,
+    place: { name: ci.server ? String(ci.server.name || "this server") : (MAP_NAMES[ci.mapId] || ci.mapId), members: ci.server ? (ci.server.private ? (ci.server.members || []).length + 1 : null) : null },
+    findUser: async n => { const u = await cmd("GET", "name:" + String(n).toLowerCase()); return u ? getP(u) : null; },
+    top: async n => (await listDocs("profiles")).map(d => Object.assign({ uid: d.id }, d.data)).filter(p => p.name).sort((a, b) => (b.bananas || 0) - (a.bananas || 0)).slice(0, n),
+    state: {
+      get: async k => { const v = await cmd("GET", "botst:" + k + ":" + key); try { return v ? JSON.parse(v) : null; } catch (e) { return null; } },
+      set: (k, v, ttl) => cmd("SET", "botst:" + k + ":" + key, JSON.stringify(v), "EX", ttl || 120),
+      del: k => cmd("DEL", "botst:" + k + ":" + key)
+    },
+    addBananas: async (u, n) => { await bankAdd(ctx, extra, u, n, "trivia", true); return true; },
+    transfer: async (a, b, n) => {
+      const pa = await getP(a), pb = await getP(b);
+      if (!pb) return { ok: false, msg: "I can't find that gorilla." };
+      if ((pa && pa.bananas || 0) < n) return { ok: false, msg: "You only have " + ((pa && pa.bananas) || 0) + " bananas." };
+      if (!(await cmd("SET", "give:" + a, "1", "EX", 10, "NX"))) return { ok: false, msg: "Wait a few seconds before giving again." };
+      await bankAdd(ctx, extra, a, -n, "gave bananas"); await bankAdd(ctx, extra, b, n, "got bananas");
+      return { ok: true };
+    },
+    stat: async (u, k) => { await bankAdd(ctx, extra, u, 0, "stat:" + String(k).slice(0, 12)); },
+    hasBad,
+    rand: Math.random
+  };
+  if (!isCount && !(await cmd("SET", "botrl:" + uid, "1", "PX", 1000, "NX"))) return extra; // one command a second per person
+  const out = await botRun(text, env);
+  if (env.isMod && /^!warn\b/i.test(text) && out.length && /has been warned/.test(out[0].text)) {
+    const mm = /@([A-Za-z0-9_]{2,16})/.exec(text), who = mm ? await env.findUser(mm[1]) : null;
+    if (who) await modLogAdd(ctx, extra, key.startsWith("s-") ? key.split(".")[0] : "global", { act: "warn", who: who.uid, text: text.replace(/^!warn\s*@\S+\s*/i, ""), where: key });
+  }
+  out.slice(0, 3).forEach((r, i) => extra.push(botMsg(key, r.bot, r.text, msg.ts + 1 + i)));
+  return extra;
 }
 
 /* ---------- writing ---------- */
@@ -331,6 +969,8 @@ function changedKeys(a, b) {
 function onlyMineChanged(ctx, before, after) {
   const vb = before.votes || {}, va = after.votes || {};
   for (const k of new Set([...Object.keys(vb), ...Object.keys(va)])) if (k !== ctx.uid && JSON.stringify(vb[k]) !== JSON.stringify(va[k])) return false;
+  const fb = before.flags || {}, fa = after.flags || {};
+  for (const k of new Set([...Object.keys(fb), ...Object.keys(fa)])) if (k !== ctx.uid && !!fb[k] !== !!fa[k]) return false;
   const rb = before.reacts || {}, ra = after.reacts || {};
   for (const e of new Set([...Object.keys(rb), ...Object.keys(ra)])) {
     const x = new Set(rb[e] || []), y = new Set(ra[e] || []);
@@ -345,6 +985,16 @@ function cleanMessage(m) {
   if (o.reply) o.reply = { id: str(o.reply.id, 60), uid: str(o.reply.uid, 80), text: censor(str(o.reply.text, 90)) };
   if (o.sticker != null) o.sticker = str(o.sticker, 20);
   if (o.img != null) o.img = str(o.img, 64);
+  if (o.voice != null) {
+    const v = o.voice, d = v && typeof v.data === "string" ? v.data : "";
+    if (d.length <= 160000 && /^data:audio\/(webm|ogg|mp4|mpeg|aac|x-m4a|wav)(;[a-z0-9=.;-]*)?;base64,[A-Za-z0-9+/=]+$/i.test(d)) o.voice = { data: d, dur: Math.max(1, Math.min(31, Math.round(+v.dur || 1))) };
+    else delete o.voice;
+  }
+  delete o.bot;
+  if (o.cst != null) { const HEX = /^[0-9a-f]{32}$/, c = o.cst; o.cst = c && HEX.test(c.id || "") ? { id: c.id, still: HEX.test(c.still || "") ? c.still : c.id, gif: !!c.gif, anim: !!c.anim } : undefined; if (!o.cst) delete o.cst; }
+  if (o.flags != null) { const f = {}; Object.entries(o.flags && typeof o.flags === "object" ? o.flags : {}).slice(0, 50).forEach(([k, v]) => { if (v === true && /^[A-Za-z0-9_-]{1,80}$/.test(k)) f[k] = true; }); o.flags = f; }
+  if (o.cleared != null) o.cleared = !!o.cleared;
+  if (o.fwd != null) { const f = o.fwd; o.fwd = f && typeof f === "object" ? { from: str(f.from, 80), where: censor(str(f.where, 40)) } : null; if (!o.fwd) delete o.fwd; }
   return o;
 }
 
@@ -360,7 +1010,13 @@ async function checkWrite(ctx, op, path, before, incoming) {
     case "meta":
       if (seg[1] === "owner") deny("The owner can't be changed.");
       if (!owner) deny("Only the owner can change that.");
+      if (seg[1] === "bans") {
+        const b = new Set((before && before.ids) || []), a = new Set((after && after.ids) || []);
+        for (const u of a) if (!b.has(u)) await modLogAdd(ctx, extra, "global", { act: "ban", who: u });
+        for (const u of b) if (!a.has(u)) await modLogAdd(ctx, extra, "global", { act: "unban", who: u });
+      }
       break;
+    case "modlog": deny("The mod log is written by the server.");
     case "mapcfg":
       if (!owner) deny("Only the owner can change map settings.");
       break;
@@ -370,8 +1026,27 @@ async function checkWrite(ctx, op, path, before, incoming) {
         if (!(await ctx.can("timeout"))) deny("You need the timeout power.");
         const m = await ctx.meta();
         if (after && m.owner && after[m.owner]) deny("The owner can't be timed out.");
+        const b = before || {}, a = after || {}, now = Date.now();
+        for (const u of new Set([...Object.keys(b), ...Object.keys(a)])) {
+          const was = (+b[u] || 0) > now, is = (+a[u] || 0) > now;
+          if (is && (+a[u] || 0) !== (+b[u] || 0)) await modLogAdd(ctx, extra, "global", { act: "timeout", who: u, text: Math.round(((+a[u]) - now) / 60000) + " min" });
+          else if (was && !is) await modLogAdd(ctx, extra, "global", { act: "untimeout", who: u });
+        }
       }
       if (!["slow", "timeouts"].includes(seg[1])) deny();
+      break;
+    }
+    case "stickers": { // custom stickers: stickers/<mapId> = {list:[{name, img:{id,still,gif,anim}}]}
+      const mid = seg[1];
+      if (seg.length !== 2) deny();
+      if (mid.startsWith("s-")) { const sv = await ctx.server(mid.slice(2)); if (!sv || (sv.owner !== uid && !owner)) deny("Only the server owner can change its stickers."); }
+      else if (!owner) deny("Only the owner can change map stickers.");
+      if (after) {
+        const HEX = /^[0-9a-f]{32}$/;
+        const list = Array.isArray(after.list) ? after.list : [];
+        if (list.length > 20) deny("Up to 20 stickers per server.");
+        after = { list: list.map(x => ({ name: str(x && x.name, 18), by: str(x && x.by, 80), img: x && x.img && HEX.test(x.img.id || "") ? { id: x.img.id, still: HEX.test(x.img.still || "") ? x.img.still : x.img.id, gif: !!x.img.gif, anim: !!x.img.anim, ts: +x.img.ts || Date.now() } : null })).filter(x => x.img && /^[a-z0-9_]{2,18}$/.test(x.name) && !hasBad(x.name)) };
+      }
       break;
     }
     case "emoji": {
@@ -399,11 +1074,26 @@ async function checkWrite(ctx, op, path, before, incoming) {
       if (after && after.activity != null) {
         const a = after.activity;
         if (!a || typeof a !== "object" || !["playing", "listening", "watching", "building", "chilling"].includes(a.type) || !str(a.text, 40).trim()) after.activity = null;
-        else { if (hasBad(a.text)) deny("Your activity has a word we don't allow."); after.activity = { type: a.type, text: str(a.text, 40).trim(), until: +a.until || 0 }; }
+        else {
+          if (hasBad(a.text)) deny("Your activity has a word we don't allow.");
+          const o = { type: a.type, text: str(a.text, 40).trim(), until: +a.until || 0 };
+          if (GAMES.includes(a.game)) {
+            const num = v => Math.max(0, Math.min(99, Math.round(+v || 0)));
+            o.game = a.game; o.mode = str(a.mode, 24); o.map = str(a.map, 24); o.code = String(a.code || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+            o.n = num(a.n); o.max = num(a.max); o.since = +a.since || Date.now(); o.detail = str(a.detail, 40).trim();
+            if (hasBad(o.code) || hasBad(o.detail) || hasBad(o.mode) || hasBad(o.map)) deny("Your activity has a word we don't allow.");
+          }
+          after.activity = o;
+        }
       }
       if (after) {
         const idOk = v => typeof v === "string" && /^[a-z0-9-]{0,24}$/.test(v);
-        for (const k of ["acc", "effect", "hat", "face", "pattern", "nameColor", "deco"]) if (after[k] != null && !idOk(after[k])) after[k] = "";
+        for (const k of ["acc", "effect", "hat", "face", "pattern", "nameColor", "deco", "bannerPreset", "avAnim"]) if (after[k] != null && !idOk(after[k])) after[k] = "";
+        if (after.tagSrv != null) after.tagSrv = typeof after.tagSrv === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(after.tagSrv) ? after.tagSrv : "";
+        if (after.srvJoined != null) after.srvJoined = [...new Set((Array.isArray(after.srvJoined) ? after.srvJoined : []).filter(x => typeof x === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(x)))].slice(0, 100);
+        if (after.seen != null) after.seen = Math.max(0, Math.min(Date.now() + 60000, Math.round(+after.seen || 0)));
+        if (after.hideSeen != null) after.hideSeen = !!after.hideSeen;
+        if (after.stats != null) { const st = {}; for (const k of ["tags", "tagWins", "surv", "codes", "rounds"]) st[k] = Math.max(0, Math.min(1e6, Math.round(+((after.stats || {})[k]) || 0))); after.stats = st; }
         if (after.lvClaimed != null) after.lvClaimed = (Array.isArray(after.lvClaimed) ? after.lvClaimed : []).filter(n => Number.isInteger(n) && n > 0 && n <= 100).slice(0, 30);
         if (after.quests != null) { const q = after.quests; after.quests = q && typeof q === "object" && JSON.stringify(q).length < 1500 ? q : null; }
         if (after.outfits != null) {
@@ -415,6 +1105,43 @@ async function checkWrite(ctx, op, path, before, incoming) {
             return r;
           });
         }
+      }
+      if (after) {
+        if (after.bday != null) after.bday = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(after.bday) ? after.bday : "";
+        if (after.nicks != null) {
+          const o = {};
+          for (const [k, v] of Object.entries(after.nicks && typeof after.nicks === "object" ? after.nicks : {}).slice(0, 40)) {
+            const n = str(v, 24).replace(/\s+/g, " ").trim();
+            if (!/^[A-Za-z0-9_-]{1,40}$/.test(k) || !n) continue;
+            if (hasBad(n)) deny("That nickname has a word we don't allow.");
+            o[k] = n;
+          }
+          after.nicks = o;
+        }
+        const invName = after.invitedName; delete after.invitedName;
+        if (!before && seg[1] === uid && typeof invName === "string" && /^[A-Za-z0-9_]{3,16}$/.test(invName)) {
+          const inv = await cmd("GET", "name:" + invName.toLowerCase());
+          if (inv && inv !== uid) {
+            const idoc = (await ctx.doc("invites/" + inv)) || { count: 0, list: [] };
+            const list = Array.isArray(idoc.list) ? idoc.list : [];
+            if (!list.includes(uid) && (idoc.count || 0) < 50) {
+              after.invitedBy = inv;
+              extra.push({ path: "invites/" + inv, data: { count: (idoc.count || 0) + 1, list: list.concat(uid).slice(-50), last: Date.now() } });
+              await bankAdd(ctx, extra, inv, 25, "invite");
+              await bankAdd(ctx, extra, uid, 25, "invited");
+            }
+          }
+        } else if (before) after.invitedBy = before.invitedBy || null;
+        const party = incoming && incoming.bdayParty; delete after.bdayParty;
+        if (party && seg[1] === uid) {
+          const d = String(party), y = +d.slice(0, 4);
+          const near = Math.abs(Date.parse(d + "T12:00:00Z") - Date.now()) < 40 * 3600e3;
+          if (/^\d{4}-\d{2}-\d{2}$/.test(d) && after.bday && d.slice(5) === after.bday && near && (before && before.bdayYear) !== y) {
+            after.bdayYear = y;
+            extra.push(botMsg("forest.general", "yapbot", botBirthday(after.display || after.name || "someone"), Date.now()));
+            await bankAdd(ctx, extra, uid, 50, "birthday", false);
+          } else if (before && before.bdayYear) after.bdayYear = before.bdayYear;
+        } else if (op !== "delete" && before) after.bdayYear = before.bdayYear || after.bdayYear || 0;
       }
       if (after && after.srvTags != null) {
         const o = {};
@@ -451,9 +1178,34 @@ async function checkWrite(ctx, op, path, before, incoming) {
         const w = after.welcome;
         after.welcome = w && typeof w === "object" ? { on: !!w.on, msg: censor(str(w.msg, 300)), rules: censor(str(w.rules, 600)), tags: (Array.isArray(w.tags) ? w.tags : []).map(t => str(t, 20).trim()).filter(t => t && !hasBad(t)).slice(0, 8) } : null;
         after.name = str(after.name, 32); after.desc = censor(str(after.desc, 120));
+        if (after.bannerBg != null) after.bannerBg = SERVER_BGS.includes(after.bannerBg) ? after.bannerBg : "";
+        if (after.bots != null) after.bots = Array.isArray(after.bots) ? [...new Set(after.bots.filter(b => BOT_IDS.includes(b)))] : null;
+        if (after.sroles != null) {
+          after.sroles = (Array.isArray(after.sroles) ? after.sroles : []).slice(0, 10).map(r => ({ id: str(r && r.id, 12), name: str(r && r.name, 20).trim() || "Role", color: /^#[0-9a-f]{6}$/i.test(r && r.color) ? r.color : "#99aab5" })).filter(r => /^[a-z0-9]{1,12}$/.test(r.id));
+          if (after.sroles.some(r => hasBad(r.name))) deny("A role name has a word we don't allow.");
+        }
+        if (after.smem != null) {
+          const ids = new Set((after.sroles || []).map(r => r.id)), o = {};
+          Object.entries(after.smem && typeof after.smem === "object" ? after.smem : {}).slice(0, 500).forEach(([u, r]) => { if (/^[A-Za-z0-9_-]{1,80}$/.test(u) && ids.has(r)) o[u] = r; });
+          after.smem = o;
+        }
         after.chans = (Array.isArray(after.chans) ? after.chans : []).slice(0, 20).map(c => ({ id: str(c.id, 24).toLowerCase().replace(/[^a-z0-9-]/g, "-"), topic: censor(str(c.topic, 120)), ann: !!c.ann, cat: censor(str(c.cat, 24)), see: /^(mods|tag:.{1,20})$/.test(c.see || "") ? c.see : "" })).filter(c => c.id.length >= 2);
         for (const k of ["iconImg", "bannerImg"]) { const m = after[k]; after[k] = m && typeof m === "object" && /^[0-9a-f]{32}$/.test(m.id || "") ? { id: m.id, still: /^[0-9a-f]{32}$/.test(m.still || "") ? m.still : m.id, gif: !!m.gif, anim: !!m.anim } : null; }
         if (!after.chans.length) deny("A server needs at least one channel.");
+        if (after.tag != null) { const t = String(after.tag || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4); if (t && hasBad(t)) deny("That tag has a word we don't allow."); after.tag = t.length >= 2 ? t : ""; }
+        if (after.tagIcon != null) after.tagIcon = ["leaf", "banana", "flame", "crown", "star", "heart", "bolt", "paw", "gem", "moon", "drop", "tree"].includes(after.tagIcon) ? after.tagIcon : "leaf";
+        if (after.tagColor != null) after.tagColor = /^#[0-9a-f]{6}$/i.test(after.tagColor) ? after.tagColor : "";
+        if (after.cat != null) after.cat = SERVER_CATS.includes(after.cat) ? after.cat : "other";
+        if (after.stage != null) after.stage = !!after.stage;
+        if (after.stageSpk != null) after.stageSpk = (Array.isArray(after.stageSpk) ? after.stageSpk : []).filter(u => typeof u === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(u)).slice(0, 30);
+      }
+      if (before && after && (before.owner === uid || owner)) {
+        const sc = "s-" + seg[1];
+        const bb = new Set(before.bans || []), ab = new Set(after.bans || []);
+        for (const u of ab) if (!bb.has(u)) await modLogAdd(ctx, extra, sc, { act: "ban", who: u });
+        for (const u of bb) if (!ab.has(u)) await modLogAdd(ctx, extra, sc, { act: "unban", who: u });
+        const bm = new Set(before.members || []), am = new Set(after.members || []);
+        for (const u of bm) if (!am.has(u) && u !== uid && !ab.has(u)) await modLogAdd(ctx, extra, sc, { act: "kick", who: u });
       }
       break;
     }
@@ -490,14 +1242,16 @@ async function checkWrite(ctx, op, path, before, incoming) {
         after.ts = Date.now();
         if (top !== "th") after.reacts = {};
         if (after.poll) after.votes = {};
-        delete after.threadCount; delete after.threadLast; delete after.pinned; delete after.edited;
+        delete after.threadCount; delete after.threadLast; delete after.pinned; delete after.edited; delete after.flags; delete after.cleared;
+        if (top === "ch" && ci && after.text) for (const x of await botExtras(ctx, key, ci, after, uid)) extra.push(x);
         // keep the unread index and DM lists up to date
         const ck = convoKeyOfMsgPath(seg);
         if (ck) {
           const priv = top !== "ch";
           const last = { ts: after.ts, uid, text: priv ? "" : str(after.text, 140) };
-          if (!priv) { if (after.sticker) last.sticker = 1; if (after.img) last.img = 1; if (after.poll) last.poll = str(after.poll.q, 80); }
+          if (!priv) { if (after.sticker) last.sticker = 1; if (after.img) last.img = 1; if (after.voice) last.voice = 1; if (after.poll) last.poll = str(after.poll.q, 80); }
           extra.push({ path: "last/" + ck, data: last });
+          if (top === "dm" || top === "gdm") await queueMsgPush(ctx, top, key, after, uid);
           if (top === "dm") {
             const other = key.split("~").find(x => x !== uid) || uid;
             const [a, b] = await getDocs(["dmidx/" + uid, "dmidx/" + other]);
@@ -507,13 +1261,21 @@ async function checkWrite(ctx, op, path, before, incoming) {
         }
       } else if (op === "delete") {
         if (before.uid !== uid && !(top === "ch" || top === "th" ? isMod : false)) deny("You can only delete your own messages.");
+        if (before.uid !== uid && !String(before.uid || "").startsWith("bot:")) {
+          const ck2 = top === "th" ? key.split("~")[0] : key;
+          const scope = ck2.startsWith("s-") ? ck2.split(".")[0] : "global";
+          await modLogAdd(ctx, extra, scope, { act: "delete", who: before.uid, text: str(before.text, 120) || (before.img ? "[picture]" : before.sticker ? "[sticker]" : "[message]"), where: ck2 });
+        }
       } else { // edit / react / vote / pin
         const ck = changedKeys(before, after);
         if (before.uid === uid) {
           if (after.uid !== uid || after.ts !== before.ts) deny();
+          if (!isMod) { after.flags = before.flags; after.cleared = before.cleared; if (after.flags === undefined) delete after.flags; if (after.cleared === undefined) delete after.cleared; }
         } else if (ck.every(k => SHARED.includes(k))) {
           if (!onlyMineChanged(ctx, before, after)) deny("You can only change your own reaction or vote.");
-        } else if ((isMod || top === "dm" || top === "gdm") && ck.every(k => ["poll", "pinned", ...SHARED].includes(k)) && onlyMineChanged(ctx, before, after)) {
+        } else if (isMod && ck.every(k => ["poll", "pinned", "cleared", ...SHARED].includes(k)) && onlyMineChanged(ctx, before, after)) {
+          // mods may end polls, pin, and mark reported messages as fine
+        } else if ((top === "dm" || top === "gdm") && ck.every(k => ["poll", "pinned", ...SHARED].includes(k)) && onlyMineChanged(ctx, before, after)) {
           // mods may end polls and pin
         } else deny("You can only edit your own messages.");
         if ((ck.includes("votes") || ck.includes("reacts")) && await ctx.timedOut()) deny("You're timed out right now.");
@@ -534,6 +1296,68 @@ async function checkWrite(ctx, op, path, before, incoming) {
       break;
     }
     case "last": return { skip: true }; // the server keeps these itself
+    case "gotw": { // Gorilla of the Week: gotw/global (site owner) or gotw/s-<server> (server owner)
+      if (seg.length !== 2) deny();
+      const key = seg[1]; let srv = null, place = "Gorilla Yapps", chKey = "forest.general";
+      if (key.startsWith("s-")) {
+        srv = await ctx.server(key.slice(2)); if (!srv) deny();
+        if (!(owner || srv.owner === uid)) deny("Only the server owner can pick the Gorilla of the Week.");
+        place = String(srv.name || "this server");
+        const ch = (srv.chans || []).find(c => c.id === "general" && !c.see) || (srv.chans || []).find(c => !c.ann && !c.see);
+        chKey = ch ? key + "." + ch.id : null;
+      } else if (key !== "global" || !owner) deny("Only the owner can pick the Gorilla of the Week.");
+      if (op === "delete") break;
+      const now = Date.now();
+      const hist = (Array.isArray(before && before.history) ? before.history : []).concat(before && before.uid ? [{ uid: before.uid, reason: before.reason || "", ts: before.ts || now }] : []).slice(-10);
+      if (incoming && incoming.end) { after = { uid: "", reason: "", ts: now, until: 0, by: uid, history: hist }; break; }
+      const who = str(incoming && incoming.uid, 80);
+      const p = who && /^[A-Za-z0-9_-]{1,80}$/.test(who) ? await ctx.doc("profiles/" + who) : null;
+      if (!p) deny("Pick someone who has an account.");
+      if (hasBad(incoming.reason)) deny("That has a word we don't allow.");
+      const reason = censor(str(incoming.reason, 80)).trim();
+      const same = before && before.uid === who && before.until > now;
+      after = { uid: who, reason, ts: same ? before.ts : now, until: same ? before.until : now + 7 * 86400000, by: uid, history: same ? (before.history || []) : hist };
+      if (!same) {
+        if (chKey) extra.push(botMsg(chKey, "yapbot", botGotw(p.display || p.name || "someone", place, reason, true), now));
+        await bankAdd(ctx, extra, who, 100, "gotw");
+      }
+      break;
+    }
+    case "codes": { // Gorilla Tag room code board: codes/<id>
+      if (seg.length !== 2) deny();
+      const where = String((before || after || {}).where || "");
+      let srv = null;
+      if (where.startsWith("s-")) { srv = await ctx.server(where.slice(2)); if (!srv || !(await serverVisible(ctx, srv))) deny("You can't post codes there."); }
+      else if (where !== "global") deny();
+      const mod = owner || (await ctx.can("manageMessages")) || !!(srv && srv.owner === uid);
+      const MODES = ["infection", "casual", "hunt", "paintbrawl", "guardian", "minigames", "other"];
+      const MAPS = ["forest", "canyon", "caves", "mountains", "city", "clouds", "beach", "basement", "metropolis", "rotating", "other"];
+      const going = g => { const o = {}; Object.entries(g && typeof g === "object" ? g : {}).slice(0, 50).forEach(([k, v]) => { if (v === true && /^[A-Za-z0-9_-]{1,80}$/.test(k)) o[k] = true; }); return o; };
+      const spots = v => Math.max(0, Math.min(9, Math.round(+v || 0)));
+      if (!before) {
+        if (op === "delete") break;
+        if (!after || after.by !== uid) deny("Post codes as yourself.");
+        if (await ctx.timedOut()) deny("You're timed out right now.");
+        const code = String(after.code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+        if (code.length < 2 || code.length > 12) deny("Room codes are 2 to 12 letters or numbers.");
+        if (hasBad(code) || hasBad(after.note)) deny("That has a word we don't allow.");
+        if (!(await cmd("SET", "codepost:" + uid, "1", "EX", 15, "NX"))) deny("Wait a few seconds before posting another code.");
+        for (const d of await listDocs("codes")) if (d.data && d.data.by === uid && d.id !== seg[1]) extra.push({ path: "codes/" + d.id, data: null });
+        const now = Date.now();
+        after = { by: uid, where, code, mode: MODES.includes(after.mode) ? after.mode : "other", map: MAPS.includes(after.map) ? after.map : "other", spots: spots(after.spots), note: censor(str(after.note, 60)), ts: now, until: now + 30 * 60000, going: {} };
+      } else if (op === "delete") {
+        if (before.by !== uid && !mod) deny("You can only remove your own code.");
+      } else if (before.by === uid) {
+        if (hasBad(after.note)) deny("That has a word we don't allow.");
+        after = Object.assign({}, before, { spots: spots(after.spots), note: censor(str(after.note, 60)), until: Math.min(Date.now() + 30 * 60000, Math.max(before.until || 0, +after.until || 0)), going: going(after.going) });
+      } else {
+        const gb = going(before.going), ga = going(after && after.going);
+        for (const k of new Set([...Object.keys(gb), ...Object.keys(ga)])) if (k !== uid && !!gb[k] !== !!ga[k]) deny("You can only change your own 'I'm joining'.");
+        const g = Object.assign({}, gb); if (ga[uid]) g[uid] = true; else delete g[uid];
+        after = Object.assign({}, before, { going: g });
+      }
+      break;
+    }
     case "events": {
       if (seg.length !== 2) deny();
       const mid = String((after || before || {}).mapId || "");
@@ -582,7 +1406,38 @@ async function checkWrite(ctx, op, path, before, incoming) {
       const fresh = (incoming && Array.isArray(incoming.items) ? incoming.items : []).filter(x => x && x.from === uid && !have.has(x.id)).slice(0, 3)
         .map(x => Object.assign(clean(x), { from: uid, ts: Date.now() }));
       if (!fresh.length) return { skip: true };
+      await queuePingPush(ctx, seg[1], fresh[0], uid);
       return { after: { items: fresh.concat(prev).slice(0, 50) }, extra };
+    }
+    case "sreports": { // reports about a server, for that server's owner: sreports/<serverDocId>
+      if (seg.length !== 2) deny();
+      const srv = await ctx.server(seg[1]); if (!srv) deny();
+      const boss = owner || srv.owner === uid;
+      const clean = x => ({ id: str(x.id, 40), by: str(x.by, 80), k: str(x.k, 200), mid: str(x.mid, 80), author: str(x.author, 80), text: censor(str(x.text, 300)), reason: str(x.reason, 40), details: censor(str(x.details, 300)), ts: +x.ts || Date.now(), status: x.status === "done" ? "done" : "open", outcome: str(x.outcome, 80), srv: seg[1] });
+      if (boss) {
+        if (op === "delete") break;
+        const items = ((after && after.items) || []).slice(-50).map(clean);
+        for (const it of items) {
+          const old = ((before && before.items) || []).find(x => x.id === it.id);
+          if (it.status === "done" && old && old.status !== "done" && it.by) { // let the person who reported know
+            const rd = await ctx.doc("reports/" + it.by);
+            if (rd && Array.isArray(rd.items) && rd.items.some(x => x.id === it.id)) extra.push({ path: "reports/" + it.by, data: { items: rd.items.map(x => x.id === it.id ? Object.assign({}, x, { status: "done", outcome: it.outcome || "handled", doneTs: Date.now() }) : x) } });
+          }
+        }
+        after = { items };
+        break;
+      }
+      if (op === "delete") deny();
+      if (!(await serverVisible(ctx, srv))) deny();
+      const prev = (before && before.items) || [], have = new Set(prev.map(x => x.id));
+      const fresh = ((incoming && incoming.items) || []).filter(x => x && x.by === uid && !have.has(x.id)).slice(0, 1).map(x => Object.assign(clean(x), { by: uid, ts: Date.now(), status: "open", outcome: "" }));
+      if (!fresh.length) return { skip: true };
+      return { after: { items: prev.concat(fresh).slice(-50) }, extra };
+    }
+    case "bank": { // banana changes from bots; only the owner can mark items as collected
+      if (seg.length !== 2 || seg[1] !== uid || op === "delete") deny();
+      const done = new Set(Array.isArray(incoming && incoming.done) ? incoming.done.map(String) : []);
+      return { after: { items: ((before && before.items) || []).filter(x => !done.has(String(x.id))) }, extra };
     }
     case "gifts": { // gift boxes: gifts/<to> = {items: [{id, from, item, note, ts}]}
       if (seg.length !== 2) deny();
@@ -628,6 +1483,7 @@ async function checkWrite(ctx, op, path, before, incoming) {
     case "data":
       if (seg[0] !== "data" || seg[1] !== "users" || seg[2] !== uid || seg.length !== 4) deny();
       if (seg[3] === "login") deny(); // passwords live elsewhere on this site
+      if (seg[3] === "push" && after) after = { subs: cleanPushSubs(after.subs) };
       break;
     case "images": deny("Upload images with the picture button.");
     default: deny();
@@ -711,6 +1567,30 @@ H.auth = api(async (body, auth, req) => {
     await putLogin(uid, Object.assign(l, { salt, hash, pv: (l.pv || 1) + 1 }));
     await cmd("DEL", "resetcode:" + sha256(code));
     return session(uid);
+  }
+
+  if (action === "invite") { // what a server invite link shows, even before you log in
+    await limit("inv:" + ip(req), 60, 60, "Too many invite checks. Wait a minute.");
+    const code = String(body.code || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+    const gone = "This invite link doesn't work anymore. Ask your friend for a new one.";
+    if (code.length < 4) throw new Fail(404, "code", gone);
+    const list = await listDocs("servers");
+    const hit = list.find(d => d.data && d.data.name && String(d.data.code || "").toUpperCase() === code);
+    if (!hit) throw new Fail(404, "code", gone);
+    const s = hit.data, HEX = /^[0-9a-f]{32}$/;
+    const img = v => v && HEX.test(v.id || "") ? { id: v.id, still: HEX.test(v.still || "") ? v.still : v.id, gif: !!v.gif, anim: !!v.anim } : null;
+    let members;
+    if (s.private) members = new Set([s.owner].concat(s.members || [])).size;
+    else members = (await listDocs("profiles")).filter(p => p.id === s.owner || (Array.isArray(p.data && p.data.srvJoined) && p.data.srvJoined.includes(hit.id))).length;
+    let from = null;
+    const fn = String(body.from || "").toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 16);
+    if (fn.length >= 3) {
+      const fu = await cmd("GET", "name:" + fn);
+      const p = fu ? await getDoc("profiles/" + fu) : null;
+      if (p) from = { name: String(p.name || "").slice(0, 16), display: String(p.display || p.name || "").slice(0, 32), fur: p.fur, hat: p.hat, face: p.face, pattern: p.pattern, acc: p.acc, avatar: img(p.avatar) };
+    }
+    return { docId: hit.id, name: String(s.name).slice(0, 32), desc: String(s.desc || "").slice(0, 120), icon: String(s.icon || "").slice(0, 8), color: /^#[0-9a-f]{6}$/i.test(s.color || "") ? s.color : "#2e7d32",
+      bannerBg: String(s.bannerBg || "").slice(0, 20), bannerImg: img(s.bannerImg), iconImg: img(s.iconImg), private: !!s.private, members: Math.max(1, members), from };
   }
 
   const uid = needUser(auth);
@@ -817,15 +1697,27 @@ H.db = api(async (body, auth, req) => {
         const code = String(o.code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
         if (code.length < 4) throw new Fail(400, "code", "No server has that code. Check it and try again.");
         const list = await listDocs("servers");
-        const hit = list.find(d => d.data.private && String(d.data.code || "").toUpperCase() === code);
+        const hit = list.find(d => d.data && d.data.name && String(d.data.code || "").toUpperCase() === code);
         if (!hit) throw new Fail(404, "code", "No server has that code. Check it and try again.");
         if ((hit.data.bans || []).includes(uid)) throw new Fail(403, "banned", "You can't join that server.");
+        if (!hit.data.private) { results.push({ ok: true, docId: hit.id, name: hit.data.name, public: true }); continue; }
         if (!(hit.data.members || []).includes(uid) && hit.data.owner !== uid) {
           const after = Object.assign({}, hit.data, { members: (hit.data.members || []).concat(uid) });
           writes.push({ path: "servers/" + hit.id, data: after });
           ctx.prime("servers/" + hit.id, after);
+          if (serverBots(hit.data).includes("modbot")) {
+            const me = (await ctx.doc("profiles/" + uid)) || {};
+            const ch = (hit.data.chans || []).find(c => c.id === "general" && !c.see) || (hit.data.chans || []).find(c => !c.ann && !c.see);
+            if (ch) writes.push(botMsg("s-" + hit.id + "." + ch.id, "modbot", botWelcome(me.display || me.name || "new monke", hit.data.name || "the server"), Date.now()));
+          }
         }
         results.push({ ok: true, docId: hit.id, name: hit.data.name });
+      } else if (o.op === "pushKey") {
+        results.push({ key: (await vapidKeys()).pub });
+      } else if (o.op === "pushTest") {
+        if (!(await cmd("SET", "pushtest:" + uid, "1", "EX", 5, "NX"))) throw new Fail(429, "slow_down", "Wait a few seconds before sending another test.");
+        (ctx.pushes = ctx.pushes || []).push({ uid, payload: { title: "Gorilla Yapps", body: "Notifications work! You'll get one like this for DMs and pings.", tag: "gy-test", url: "/" } });
+        results.push({ ok: true });
       } else if (o.op === "newId") {
         results.push({ id: randomId(20) });
       } else results.push({ error: "bad_op" });
@@ -843,6 +1735,11 @@ H.db = api(async (body, auth, req) => {
   }
   if (redisExtra.length) await pipe(redisExtra);
   const seq = await writeDocs(writes);
+  if (ctx.pushes && ctx.pushes.length) {
+    const host = String((req && req.headers && (req.headers["x-forwarded-host"] || req.headers.host)) || "").replace(/[^A-Za-z0-9.:-]/g, "");
+    const subject = !host || /^(localhost|127\.)/.test(host) ? "https://gorilla-yapp.vercel.app" : "https://" + host.replace(/:\d+$/, "");
+    try { await sendPushes(ctx.pushes, subject); } catch (e) {}
+  }
   return { results, seq };
 });
 
